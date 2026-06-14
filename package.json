@@ -1,0 +1,17 @@
+{
+  "name": "midnight-lease-dapp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "compact": "pnpm --dir contracts/lease compact",
+    "dev": "pnpm dev:web",
+    "dev:web": "pnpm --dir apps/web dev",
+    "build": "pnpm build:web",
+    "build:web": "pnpm --dir apps/web build",
+    "lint": "pnpm lint:web",
+    "lint:web": "pnpm --dir apps/web lint",
+    "sync:assets": "pnpm --dir apps/web sync-contract-assets"
+  }
+}

@@ -1,0 +1,177 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+export enum LeaseState {
+  OFFERED,
+  CLAIMED,
+  ACTIVE,
+  IN_ARREARS,
+  TERMINATED,
+  COMPLETED,
+}
+
+witness callerAddress(): Bytes<32>;
+
+pure circuit partyCommitment(tag: Bytes<32>, leaseIdValue: Bytes<32>, wallet: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([tag, leaseIdValue, wallet]);
+}
+
+export sealed ledger leaseId: Bytes<32>;
+export sealed ledger propertyHash: Bytes<32>;
+export sealed ledger agreementHash: Bytes<32>;
+export sealed ledger monthlyRent: Uint<64>;
+export sealed ledger depositAmount: Uint<64>;
+export sealed ledger termMonths: Uint<64>;
+export sealed ledger landlordCommitment: Bytes<32>;
+
+export ledger state: LeaseState;
+export ledger tenantClaimed: Boolean;
+export ledger tenantCommitment: Bytes<32>;
+export ledger paymentsMade: Uint<64>;
+export ledger depositConfirmed: Boolean;
+export ledger depositReceiptHash: Bytes<32>;
+export ledger hasDepositReceiptHash: Boolean;
+export ledger depositReleased: Boolean;
+export ledger breachCount: Uint<64>;
+export ledger lastPaymentReference: Bytes<32>;
+export ledger hasLastPaymentReference: Boolean;
+export ledger terminationReasonHash: Bytes<32>;
+export ledger hasTerminationReasonHash: Boolean;
+
+constructor(
+  leaseIdArg: Bytes<32>,
+  propertyHashArg: Bytes<32>,
+  agreementHashArg: Bytes<32>,
+  monthlyRentArg: Uint<64>,
+  depositAmountArg: Uint<64>,
+  termMonthsArg: Uint<64>,
+) {
+  leaseId = disclose(leaseIdArg);
+  propertyHash = disclose(propertyHashArg);
+  agreementHash = disclose(agreementHashArg);
+  monthlyRent = disclose(monthlyRentArg);
+  depositAmount = disclose(depositAmountArg);
+  termMonths = disclose(termMonthsArg);
+  landlordCommitment = disclose(
+    partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress())
+  );
+
+  state = LeaseState.OFFERED;
+  tenantClaimed = false;
+  tenantCommitment = pad(32, "");
+  paymentsMade = 0 as Uint<64>;
+  depositConfirmed = false;
+  depositReceiptHash = pad(32, "");
+  hasDepositReceiptHash = false;
+  depositReleased = false;
+  breachCount = 0 as Uint<64>;
+  lastPaymentReference = pad(32, "");
+  hasLastPaymentReference = false;
+  terminationReasonHash = pad(32, "");
+  hasTerminationReasonHash = false;
+}
+
+export circuit claimLease(): [] {
+  assert(state == LeaseState.OFFERED, "lease is not open");
+  assert(!tenantClaimed, "tenant already claimed");
+
+  tenantCommitment = disclose(
+    partyCommitment(pad(32, "lease:tenant:v1"), leaseId, callerAddress())
+  );
+  tenantClaimed = true;
+  state = LeaseState.CLAIMED;
+}
+
+export circuit confirmDeposit(receiptHash: Bytes<32>): [] {
+  assert(
+    landlordCommitment == partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress()),
+    "not landlord"
+  );
+  assert(state == LeaseState.CLAIMED || state == LeaseState.ACTIVE, "wrong state");
+
+  depositConfirmed = true;
+  depositReceiptHash = disclose(receiptHash);
+  hasDepositReceiptHash = true;
+}
+
+export circuit activateLease(): [] {
+  assert(
+    landlordCommitment == partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress()),
+    "not landlord"
+  );
+  assert(state == LeaseState.CLAIMED, "tenant claim required");
+  assert(depositConfirmed, "deposit required");
+
+  state = LeaseState.ACTIVE;
+}
+
+export circuit recordPayment(paymentReference: Bytes<32>): [] {
+  assert(state == LeaseState.ACTIVE || state == LeaseState.IN_ARREARS, "lease is not active");
+  assert(tenantClaimed, "tenant not set");
+  assert(
+    tenantCommitment == partyCommitment(pad(32, "lease:tenant:v1"), leaseId, callerAddress()),
+    "not tenant"
+  );
+  assert(paymentsMade != termMonths, "lease already completed");
+
+  const nextPaymentsMade = (paymentsMade + 1) as Uint<64>;
+  paymentsMade = disclose(nextPaymentsMade);
+  lastPaymentReference = disclose(paymentReference);
+  hasLastPaymentReference = true;
+
+  if (nextPaymentsMade == termMonths) {
+    state = LeaseState.COMPLETED;
+  } else {
+    state = LeaseState.ACTIVE;
+  }
+}
+
+export circuit markInArrears(): [] {
+  assert(
+    landlordCommitment == partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress()),
+    "not landlord"
+  );
+  assert(state == LeaseState.ACTIVE, "lease is not active");
+
+  breachCount = disclose((breachCount + 1) as Uint<64>);
+  state = LeaseState.IN_ARREARS;
+}
+
+export circuit terminateByLandlord(reasonHash: Bytes<32>): [] {
+  assert(
+    landlordCommitment == partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress()),
+    "not landlord"
+  );
+  assert(
+    state == LeaseState.CLAIMED || state == LeaseState.ACTIVE || state == LeaseState.IN_ARREARS,
+    "wrong state"
+  );
+
+  terminationReasonHash = disclose(reasonHash);
+  hasTerminationReasonHash = true;
+  state = LeaseState.TERMINATED;
+}
+
+export circuit terminateByTenant(reasonHash: Bytes<32>): [] {
+  assert(state == LeaseState.CLAIMED || state == LeaseState.ACTIVE || state == LeaseState.IN_ARREARS, "wrong state");
+  assert(tenantClaimed, "tenant not set");
+  assert(
+    tenantCommitment == partyCommitment(pad(32, "lease:tenant:v1"), leaseId, callerAddress()),
+    "not tenant"
+  );
+
+  terminationReasonHash = disclose(reasonHash);
+  hasTerminationReasonHash = true;
+  state = LeaseState.TERMINATED;
+}
+
+export circuit releaseDeposit(): [] {
+  assert(
+    landlordCommitment == partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress()),
+    "not landlord"
+  );
+  assert(state == LeaseState.COMPLETED || state == LeaseState.TERMINATED, "wrong state");
+
+  depositReleased = true;
+}

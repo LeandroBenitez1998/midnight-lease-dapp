@@ -1,0 +1,31 @@
+{
+  "name": "@midnight-lease/lease-contract",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@midnight-ntwrk/compact-runtime": "^0.16.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3",
+    "vitest": "^3.2.1"
+  },
+  "scripts": {
+    "compact": "compact compile +0.31.0 src/lease.compact src/managed/lease && rm -rf managed && cp -Rf ./src/managed ./managed",
+    "build": "rm -rf dist && tsc --project tsconfig.build.json && cp -Rf ./src/managed ./dist/managed && cp -Rf ./src/managed ./managed && cp ./src/lease.compact ./dist",
+    "lint": "echo 'No lease contract lint configured yet.'",
+    "test": "pnpm compact && vitest run"
+  }
+}

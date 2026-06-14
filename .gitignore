@@ -1,0 +1,17 @@
+node_modules
+dist
+.turbo
+.tmp/
+.DS_Store
+*.log
+
+apps/*/node_modules
+apps/*/dist
+apps/*/.vite
+apps/*/.env
+apps/*/.env.*
+
+contracts/*/node_modules
+contracts/*/dist
+
+.pnpm-debug.log*
