@@ -1,5 +1,7 @@
 # `@eddalabs/frontend-vite-react`
 
+> Built on the [Midnight Network](https://midnight.network) — a data-protection blockchain by Input Output Global that enables privacy-preserving smart contracts via zero-knowledge proofs.
+
 The React + Vite frontend for the [Midnight Starter Template](../README.md). It connects to the Lace wallet, talks to the deployed Lease contract, and demonstrates the dApp Connector flow against any Midnight network (standalone, Preview, Preprod, Mainnet).
 
 > 💡 Most setup steps live in the **[root README](../README.md)**. This file documents what's specific to the frontend package.
