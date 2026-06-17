@@ -39,6 +39,36 @@ Create `.env` from [`.env_template`](./.env_template):
 | Variable | Description |
 |---|---|
 | `VITE_CONTRACT_ADDRESS` | Address of the deployed Lease contract to connect to. |
+| `MIDNIGHT_NETWORK_ID` | Red usada por `pnpm deploy:lease`; por defecto `preprod`. |
+| `MIDNIGHT_INDEXER_HTTP` / `MIDNIGHT_INDEXER_WS` | Endpoints del indexer para deploy headless. |
+| `MIDNIGHT_RPC_URL` | Endpoint RPC/relay de Midnight para enviar transacciones. |
+| `MIDNIGHT_PROOF_SERVER_URL` | Proof server local o remoto usado por el deploy CLI. |
+| `MIDNIGHT_WALLET_SEED_HEX` | Seed hex de la wallet headless con NIGHT/DUST disponible. No la commitees. |
+| `MIDNIGHT_WALLET_SYNC_TIMEOUT_MS` / `MIDNIGHT_DUST_TIMEOUT_MS` | Timeouts del deploy headless. |
+
+## Deploy del contrato AgeGate/lease
+
+Primero compilá el contrato para generar `contracts/lease/managed/lease`:
+
+```bash
+pnpm compact
+```
+
+Después ejecutá un chequeo sin wallet ni transacciones:
+
+```bash
+pnpm deploy:lease -- --dry-run
+```
+
+Para desplegar de verdad, configurá una wallet headless con fondos y DUST disponible:
+
+```bash
+MIDNIGHT_WALLET_SEED_HEX="<seed-hex>" pnpm deploy:lease
+```
+
+El comando imprime `Contract address:` y la línea exacta `VITE_CONTRACT_ADDRESS=...` para pegar en `.env`.
+
+Si preferís un deploy manual desde el navegador, la ruta `/wallet-ui` ahora incluye una tarjeta de "Deploy manual del lease" que usa la wallet conectada. Ese flujo está pensado para despliegues manuales; `pnpm deploy:lease` queda igual para automatización y CI.
 
 ## Project layout
 

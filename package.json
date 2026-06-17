@@ -6,6 +6,7 @@
   "packageManager": "pnpm@10.14.0",
   "scripts": {
     "compact": "pnpm --dir contracts/lease compact",
+    "deploy:lease": "pnpm --dir apps/web deploy:lease",
     "dev": "pnpm dev:web",
     "dev:web": "pnpm --dir apps/web dev",
     "build": "pnpm build:web",

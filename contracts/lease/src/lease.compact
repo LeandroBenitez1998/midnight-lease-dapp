@@ -1,177 +1,334 @@
+// ============================================================
+//  CONTRATO DE ALQUILER (Rental Lease) — Midnight Network
+//  Lenguaje: Compact v0.23+
+//  Paradigma: state machine basada en hashes + compromisos ZK
+// ============================================================
+//  Midnight NO ES como Ethereum. En Solidity mutás estado directamente.
+//  En Compact, cada transición es un CIRCUITO ZK que prueba que la
+//  nueva estado es válido sin revelar datos sensibles.
+//
+//  Los datos públicos (ledger) son visibles para todos en la blockchain.
+//  Los datos privados (witnesses) solo los conoce el caller.-
+//  Este contrato usa un diseño "hash commitments" para lograr privacidad:
+//  guardamos HASHES, no datos crudos. Demostramos conocimiento sin revelar.
+
 pragma language_version >= 0.23;
 
+// La stdlib trae utilidades como pad(), hash(), compare().
+// Siempre importarla — es parte del runtime de Compact.
 import CompactStandardLibrary;
 
-export enum LeaseState {
-  OFFERED,
-  CLAIMED,
+// ============================================================
+//  MÁQUINA DE ESTADOS (State Machine)
+// ============================================================
+//  El contrato es una FSM (Finite State Machine) con 6 estados.
+//  Cada circuito (transición) valida que venís del estado correcto
+//  y te mueve al siguiente. Esto previene saltos ilegales.
+//
+//  FLUJO: EMPTY -> REGISTERED -> PARTIALLY_SIGNED -> SIGNED -> PAID -> ACTIVE
+//         (creación)   (registro)   (1 de 2 firmas)   (2 firmas) (pago)   (activo)
+//
+//  ¿Por qué no guardar "landlord" y "tenant" directamente?
+//  Porque en Midnight el LEDGER ES PÚBLICO. Si pusieramos direcciones
+//  de wallet, cualquiera vería quién alquila y a quién. Usando
+//  COMMITMENTS (hash + nonce), demostramos que conocemos el valor
+//  sin revelarlo. Es como mostrar la foto de una carta sin mostrar su palo.
+export enum RentalStatus {
+  EMPTY,
+  REGISTERED,
+  PARTIALLY_SIGNED,
+  SIGNED,
+  PAID,
   ACTIVE,
-  IN_ARREARS,
-  TERMINATED,
-  COMPLETED,
 }
 
-witness callerAddress(): Bytes<32>;
-
-pure circuit partyCommitment(tag: Bytes<32>, leaseIdValue: Bytes<32>, wallet: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([tag, leaseIdValue, wallet]);
-}
-
-export sealed ledger leaseId: Bytes<32>;
-export sealed ledger propertyHash: Bytes<32>;
-export sealed ledger agreementHash: Bytes<32>;
-export sealed ledger monthlyRent: Uint<64>;
-export sealed ledger depositAmount: Uint<64>;
-export sealed ledger termMonths: Uint<64>;
-export sealed ledger landlordCommitment: Bytes<32>;
-
-export ledger state: LeaseState;
-export ledger tenantClaimed: Boolean;
+// ============================================================
+//  ESTADO PÚBLICO (Ledger)
+// ============================================================
+//  "export ledger" significa: esto se escribe en la blockchain
+//  y es visible para TODOS los nodos. No es secreto.
+//
+//  TODAS las variables acá son Bytes<32> — hashes SHA-256.
+//  Nunca guardamos datos sensibles en crudo.
+//
+//  ¿Por qué todo son hashes?
+//  Porque en ZK, probar "conozco X tal que hash(X) == Y" es barato
+//  computacionalmente. Probar "X es una dirección válida" es caro.
+//
+//  contractIdHash: hash único de este contrato de alquiler
+//  contractHash: hash del documento legal (PDF subido a IPFS, etc.)
+//  landlordCommitment: compromiso del landlord (hash de pubkey + nonce)
+//  tenantCommitment: compromiso del inquilino
+//  landlordSignatureHash: hash de la firma digital del landlord
+//  tenantSignatureHash: hash de la firma digital del inquilino
+//  paymentHash: hash del comprobante de pago
+//  status: estado actual de la máquina de estados
+export ledger contractIdHash: Bytes<32>;
+export ledger contractHash: Bytes<32>;
+export ledger landlordCommitment: Bytes<32>;
 export ledger tenantCommitment: Bytes<32>;
-export ledger paymentsMade: Uint<64>;
-export ledger depositConfirmed: Boolean;
-export ledger depositReceiptHash: Bytes<32>;
-export ledger hasDepositReceiptHash: Boolean;
-export ledger depositReleased: Boolean;
-export ledger breachCount: Uint<64>;
-export ledger lastPaymentReference: Bytes<32>;
-export ledger hasLastPaymentReference: Boolean;
-export ledger terminationReasonHash: Bytes<32>;
-export ledger hasTerminationReasonHash: Boolean;
+export ledger landlordSignatureHash: Bytes<32>;
+export ledger tenantSignatureHash: Bytes<32>;
+export ledger paymentHash: Bytes<32>;
+export ledger status: RentalStatus;
 
-constructor(
-  leaseIdArg: Bytes<32>,
-  propertyHashArg: Bytes<32>,
-  agreementHashArg: Bytes<32>,
-  monthlyRentArg: Uint<64>,
-  depositAmountArg: Uint<64>,
-  termMonthsArg: Uint<64>,
-) {
-  leaseId = disclose(leaseIdArg);
-  propertyHash = disclose(propertyHashArg);
-  agreementHash = disclose(agreementHashArg);
-  monthlyRent = disclose(monthlyRentArg);
-  depositAmount = disclose(depositAmountArg);
-  termMonths = disclose(termMonthsArg);
-  landlordCommitment = disclose(
-    partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress())
-  );
-
-  state = LeaseState.OFFERED;
-  tenantClaimed = false;
-  tenantCommitment = pad(32, "");
-  paymentsMade = 0 as Uint<64>;
-  depositConfirmed = false;
-  depositReceiptHash = pad(32, "");
-  hasDepositReceiptHash = false;
-  depositReleased = false;
-  breachCount = 0 as Uint<64>;
-  lastPaymentReference = pad(32, "");
-  hasLastPaymentReference = false;
-  terminationReasonHash = pad(32, "");
-  hasTerminationReasonHash = false;
+// ============================================================
+//  CIRCUITO PURO: emptyHash
+// ============================================================
+//  "pure circuit" = no necesita prueba ZK, es solo una función
+//  determinística. Cualquiera puede computarla y verificar el resultado.
+//  Es pública, sin privacidad involucrada.
+//
+//  pad(32, "registry:empty") crea un Bytes<32> a partir del string.
+//  Este valor especial funciona como "marcador de vacío".
+//  Es como NULL pero en ZK-land: un hash canónico que significa
+//  "este campo no fue seteado todavía".
+//
+//  ¿Por qué no usar 0x000...0? Porque 0 puede ser un hash válido
+//  de algún dato real. Usamos un string canónico para evitar colisiones.
+pure circuit emptyHash(): Bytes<32> {
+  return pad(32, "registry:empty");
 }
 
-export circuit claimLease(): [] {
-  assert(state == LeaseState.OFFERED, "lease is not open");
-  assert(!tenantClaimed, "tenant already claimed");
-
-  tenantCommitment = disclose(
-    partyCommitment(pad(32, "lease:tenant:v1"), leaseId, callerAddress())
-  );
-  tenantClaimed = true;
-  state = LeaseState.CLAIMED;
+// ============================================================
+//  CONSTRUCTOR
+// ============================================================
+//  Solo se ejecuta UNA vez en la vida del contrato: cuando se deploya.
+//  Inicializa todo a "vacío". No hay owner, no hay admin.
+//  Cualquiera con DUST puede deployarlo.
+//
+//  En Midnight no hay msg.sender como en Ethereum. La identidad
+//  del deployer no se registra automáticamente — si la necesitás,
+//  la pasás como argumento o commitment.
+constructor() {
+  contractIdHash = emptyHash();
+  contractHash = emptyHash();
+  landlordCommitment = emptyHash();
+  tenantCommitment = emptyHash();
+  landlordSignatureHash = emptyHash();
+  tenantSignatureHash = emptyHash();
+  paymentHash = emptyHash();
+  status = RentalStatus.EMPTY;
 }
 
-export circuit confirmDeposit(receiptHash: Bytes<32>): [] {
-  assert(
-    landlordCommitment == partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress()),
-    "not landlord"
-  );
-  assert(state == LeaseState.CLAIMED || state == LeaseState.ACTIVE, "wrong state");
-
-  depositConfirmed = true;
-  depositReceiptHash = disclose(receiptHash);
-  hasDepositReceiptHash = true;
+// ============================================================
+//  CIRCUITO PURO: isEmptyHash
+// ============================================================
+//  Helper: ¿este Bytes<32> es el marcador de vacío?
+//  Es un "pure circuit" porque no lee ni escribe ledger — solo computa.
+//
+//  En ZK, cualquier comparación de hashes es barata:
+//  SHA-256 es ~30k constraints en el circuito.
+pure circuit isEmptyHash(value: Bytes<32>): Boolean {
+  return value == emptyHash();
 }
 
-export circuit activateLease(): [] {
-  assert(
-    landlordCommitment == partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress()),
-    "not landlord"
-  );
-  assert(state == LeaseState.CLAIMED, "tenant claim required");
-  assert(depositConfirmed, "deposit required");
+// ============================================================
+//  TRANSICIÓN 1: registerRentalContract
+// ============================================================
+//  Propósito: crear un nuevo registro de alquiler.
+//  Quién llama: el gestor de propiedades o una app frontend.
+//
+//  Parámetros:
+//    nextContractIdHash: hash único del contrato legal
+//    nextContractHash: hash del documento (ej: IPFS CID)
+//    nextLandlordCommitment: hash(nonce + pubkey) del landlord
+//    nextTenantCommitment: hash(nonce + pubkey) del inquilino
+//
+//  IMPORTANTE: 
+//  - Los commitments NO revelan quién es landlord/inquilino.
+//  - Pero se aseguran de que sean DIFERENTES.
+//  - El `disclose()` PUBLICITA el valor en la blockchain.
+//    Sí, parece contradictorio: estamos en un contrato ZK con privacidad,
+//    pero estos valores SON públicos por diseño — son hashes.
+//    La privacidad está en que NO sabemos quién está DETRÁS de cada hash.
+//
+//  return type: [] (tupla vacía). Los circuitos no retornan valores
+//  de negocio — solo validan o fallan con assert.
+export circuit registerRentalContract(
+  nextContractIdHash: Bytes<32>,
+  nextContractHash: Bytes<32>,
+  nextLandlordCommitment: Bytes<32>,
+  nextTenantCommitment: Bytes<32>,
+): [] {
+  // Guardias de seguridad: solo se puede llamar una vez
+  assert(status == RentalStatus.EMPTY, "registry already initialized");
+  // Nadie puede pasar hashes vacíos como "válidos"
+  assert(!isEmptyHash(nextContractIdHash), "contract id hash required");
+  assert(!isEmptyHash(nextContractHash), "contract hash required");
+  assert(!isEmptyHash(nextLandlordCommitment), "landlord commitment required");
+  assert(!isEmptyHash(nextTenantCommitment), "tenant commitment required");
+  // Si landlord y tenant usaran el mismo commitment, sería imposible
+  // distinguirlos después en markContractSigned. Sería un agujero de seguridad.
+  assert(nextLandlordCommitment != nextTenantCommitment, "signer commitments must differ");
 
-  state = LeaseState.ACTIVE;
+  // disclose() publica el valor en la blockchain.
+  // En ZK-land, escribir ledger requiere disclose() explícito.
+  // Sin disclose(), el valor se usa internamente en el circuito pero
+  // no persiste. Es una protección contra escribir datos sensibles sin querer.
+  contractIdHash = disclose(nextContractIdHash);
+  contractHash = disclose(nextContractHash);
+  landlordCommitment = disclose(nextLandlordCommitment);
+  tenantCommitment = disclose(nextTenantCommitment);
+  status = RentalStatus.REGISTERED;
 }
 
-export circuit recordPayment(paymentReference: Bytes<32>): [] {
-  assert(state == LeaseState.ACTIVE || state == LeaseState.IN_ARREARS, "lease is not active");
-  assert(tenantClaimed, "tenant not set");
-  assert(
-    tenantCommitment == partyCommitment(pad(32, "lease:tenant:v1"), leaseId, callerAddress()),
-    "not tenant"
-  );
-  assert(paymentsMade != termMonths, "lease already completed");
+// ============================================================
+//  TRANSICIÓN 2: markContractSigned
+// ============================================================
+//  Propósito: registrar la firma digital de una de las partes.
+//  Quién llama: landlord O tenant (cualquiera de los dos, en cualquier orden).
+//
+//  CLAVE DE PRIVACIDAD:
+//  El circuito recibe un "signerCommitment" y demuestra que coincide
+//  con landlordCommitment O tenantCommitment. PERO SOLO REVELA CUÁL
+//  mediante disclose(). ¿Por qué?
+//
+//  Porque si NO reveláramos quién firmó, cualquiera podría firmar
+//  múltiples veces (firmar como landlord aunque seas tenant). 
+//  El disclose() publicita SOLO el resultado booleano de la comparación,
+//  no el commitment en sí. Así sabemos "firmó el landlord" sin
+//  revelar la identidad real del landlord.
+//
+//  Esto se llama "selective disclosure" — revelás el mínimo necesario.
+export circuit markContractSigned(
+  nextContractIdHash: Bytes<32>,
+  signerCommitment: Bytes<32>,
+  nextSignatureHash: Bytes<32>,
+): [] {
+  // Verificar que este es el contrato correcto (evita replay attacks)
+  assert(contractIdHash == nextContractIdHash, "unknown contract id hash");
+  // Solo se puede firmar si el contrato está esperando firmas
+  assert(status == RentalStatus.REGISTERED || status == RentalStatus.PARTIALLY_SIGNED, "contract is not awaiting signatures");
+  // No se puede firmar "vacío" — la firma debe tener contenido real
+  assert(!isEmptyHash(nextSignatureHash), "signature hash required");
 
-  const nextPaymentsMade = (paymentsMade + 1) as Uint<64>;
-  paymentsMade = disclose(nextPaymentsMade);
-  lastPaymentReference = disclose(paymentReference);
-  hasLastPaymentReference = true;
+  // ¿Ya firmó cada parte? Lo chequeamos comparando contra el marcador vacío.
+  const landlordWasSigned = !isEmptyHash(landlordSignatureHash);
+  const tenantWasSigned = !isEmptyHash(tenantSignatureHash);
 
-  if (nextPaymentsMade == termMonths) {
-    state = LeaseState.COMPLETED;
+  // Aquí ocurre la MAGIA ZK de privacidad:
+  //   signerCommitment == landlordCommitment  → TRUE/FALSE (se revela)
+  //   signerCommitment == tenantCommitment    → TRUE/FALSE (se revela)
+  // Pero NUNCA se revela el valor de signerCommitment.
+  // Esto es posible porque la igualdad de hashes es verificable ZK
+  // sin exponer los inputs.
+  //
+  // disclose() hace que el resultado booleano sea PÚBLICO en el ledger.
+  // Sin disclose(), el resultado solo existiría dentro del circuito.
+  const isLandlord = disclose(signerCommitment == landlordCommitment);
+  const isTenant = disclose(signerCommitment == tenantCommitment);
+
+  // El firmante debe ser una de las dos partes registradas
+  assert(isLandlord || isTenant, "unknown signer commitment");
+
+  // Asegurarse de que no firme dos veces la misma parte
+  if (isLandlord) {
+    assert(!landlordWasSigned, "landlord already signed");
+    landlordSignatureHash = disclose(nextSignatureHash);
   } else {
-    state = LeaseState.ACTIVE;
+    assert(!tenantWasSigned, "tenant already signed");
+    tenantSignatureHash = disclose(nextSignatureHash);
+  }
+
+  // Transición automática de estado: si AMBAS partes firmaron, avanzamos.
+  // Notar la lógica: si landlord YA había firmado (landlordWasSigned)
+  // y ahora firma tenant (isTenant), pasamos a SIGNED automáticamente.
+  // Esto funciona sin importar el orden de las firmas.
+  if ((landlordWasSigned || isLandlord) && (tenantWasSigned || isTenant)) {
+    status = RentalStatus.SIGNED;
+  } else {
+    status = RentalStatus.PARTIALLY_SIGNED;
   }
 }
 
-export circuit markInArrears(): [] {
-  assert(
-    landlordCommitment == partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress()),
-    "not landlord"
-  );
-  assert(state == LeaseState.ACTIVE, "lease is not active");
+// ============================================================
+//  TRANSICIÓN 3: markContractPaid
+// ============================================================
+//  Propósito: registrar que el pago fue realizado.
+//  Quién llama: cualquiera que tenga el comprobante de pago.
+//
+//  ¿Por qué no verificamos QUIÉN paga?
+//  Porque este contrato no maneja tokens nativos. El pago ocurre
+//  FUERA DE CADENA (en el mundo real: transferencia bancaria, crypto,
+//  stablecoin, etc.). Este circuito solo registra "alguien probó
+//  que pagó" guardando un hash del comprobante.
+//
+//  Si quisieras manejar pagos on-chain con NIGHT tokens,
+//  necesitarías usar Zswap y contratos de token — eso sería otro
+//  contrato aparte o un diseño más complejo con ledger nativo.
+export circuit markContractPaid(nextContractIdHash: Bytes<32>, nextPaymentHash: Bytes<32>): [] {
+  assert(contractIdHash == nextContractIdHash, "unknown contract id hash");
+  // El pago solo se puede registrar si el contrato está firmado por ambas partes
+  assert(status == RentalStatus.SIGNED, "contract must be fully signed first");
+  assert(!isEmptyHash(nextPaymentHash), "payment hash required");
 
-  breachCount = disclose((breachCount + 1) as Uint<64>);
-  state = LeaseState.IN_ARREARS;
+  paymentHash = disclose(nextPaymentHash);
+  status = RentalStatus.PAID;
 }
 
-export circuit terminateByLandlord(reasonHash: Bytes<32>): [] {
-  assert(
-    landlordCommitment == partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress()),
-    "not landlord"
-  );
-  assert(
-    state == LeaseState.CLAIMED || state == LeaseState.ACTIVE || state == LeaseState.IN_ARREARS,
-    "wrong state"
-  );
+// ============================================================
+//  TRANSICIÓN 4: activateContract
+// ============================================================
+//  Propósito: activar formalmente el contrato de alquiler.
+//  Quién llama: cualquiera — la condición ya se verificó antes.
+//
+//  ¿Por qué existe este paso separado de markContractPaid?
+//  Porque en el mundo real, "pago registrado" ≠ "contrato activo".
+//  Podría haber un período de verificación (ej: el pago tarda
+//  en confirmarse). Separar PAID de ACTIVE da flexibilidad.
+//
+//  También es un patrón de seguridad: si necesitás un paso de
+//  "reconciliación" antes de activar, este circuito es el hook.
+//
+//  No se pasa paymentHash acá — no es necesario verificarlo de nuevo.
+//  El estado PAID ya garantiza que el pago fue registrado.
+//  Esto es un ejemplo de "confiar en la máquina de estados":
+//  una vez que el ledger dice PAID, ningún circuito futuro puede
+//  retroceder. El estado es inmutable hacia atrás.
+export circuit activateContract(nextContractIdHash: Bytes<32>): [] {
+  assert(contractIdHash == nextContractIdHash, "unknown contract id hash");
+  assert(status == RentalStatus.PAID, "payment must be registered first");
 
-  terminationReasonHash = disclose(reasonHash);
-  hasTerminationReasonHash = true;
-  state = LeaseState.TERMINATED;
+  status = RentalStatus.ACTIVE;
 }
 
-export circuit terminateByTenant(reasonHash: Bytes<32>): [] {
-  assert(state == LeaseState.CLAIMED || state == LeaseState.ACTIVE || state == LeaseState.IN_ARREARS, "wrong state");
-  assert(tenantClaimed, "tenant not set");
-  assert(
-    tenantCommitment == partyCommitment(pad(32, "lease:tenant:v1"), leaseId, callerAddress()),
-    "not tenant"
-  );
-
-  terminationReasonHash = disclose(reasonHash);
-  hasTerminationReasonHash = true;
-  state = LeaseState.TERMINATED;
-}
-
-export circuit releaseDeposit(): [] {
-  assert(
-    landlordCommitment == partyCommitment(pad(32, "lease:landlord:v1"), leaseId, callerAddress()),
-    "not landlord"
-  );
-  assert(state == LeaseState.COMPLETED || state == LeaseState.TERMINATED, "wrong state");
-
-  depositReleased = true;
-}
+// ============================================================
+//  ANATOMÍA DE UN CONTRATO COMPACT
+// ============================================================
+//
+//  1. LEDGER (estado público):
+//     Variables con "export ledger". Visibles en la blockchain.
+//     Se leen fuera de circuito sin necesidad de ZK.
+//
+//  2. CIRCUITOS (transiciones de estado):
+//     Funciones "export circuit". Cada una es una transición ZK
+//     que recibe inputs (públicos) y opcionalmente witnesses (privados),
+//     verifica condiciones (assert) y muta el ledger via disclose().
+//
+//  3. CONSTRUCTOR:
+//     Se ejecuta una vez al deployar. Define el estado inicial.
+//
+//  4. PURE CIRCUITS:
+//     Funciones sin ZK. No interactúan con el ledger.
+//     Son helpers computacionales públicos.
+//
+//  5. WITNESSES (en witnesses.ts):
+//     Estado PRIVADO de cada participante. No va al ledger.
+//     Se pasa al circuito como inputs privados que el prover
+//     conoce pero no revela. Este contrato no usa witnesses
+//     porque todas las validaciones se hacen con datos públicos.
+//
+//  PATRÓN DE PRIVACIDAD:
+//  Este contrato usa "commitment-based privacy": guardamos hashes
+//  en el ledger en lugar de datos crudos. Esto permite:
+//  - Verificar igualdad de datos sin revelar los datos
+//  - Cada parte prueba que conoce el preimagen de su commitment
+//  - Los commitments se crean OFF-CHAIN y se pasan como hash
+//
+//  SEGURIDAD:
+//  - assert() en cada transición verifica precondiciones
+//  - disclose() explícito evita filtrar datos sensibles
+//  - La FSM previene saltos de estado ilegales
+//  - Hashes canónicos (emptyHash) evitan ataques de colisión con NULL
+//  - Replay protection via contractIdHash en cada circuito

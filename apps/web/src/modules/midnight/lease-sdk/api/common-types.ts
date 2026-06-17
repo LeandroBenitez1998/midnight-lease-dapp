@@ -12,7 +12,9 @@ export type LeaseContract = Lease.Contract<LeasePrivateState>
 
 export type DeployedLeaseContract = contracts.DeployedContract<LeaseContract> | contracts.FoundContract<LeaseContract>
 
-export const createLeasePrivateState = (coinPublicKey: string): LeasePrivateState => ({
+export const createLeasePrivateState = (
+  coinPublicKey: string,
+): LeasePrivateState => ({
   callerAddress: coinPublicKeyToBytes(coinPublicKey),
 })
 

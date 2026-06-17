@@ -66,5 +66,15 @@ export default defineConfig(({ mode }) => ({
     fs: {
       allow: ['..'],
     },
+    proxy: {
+      '/prove': {
+        target: 'http://127.0.0.1:6300',
+        changeOrigin: true,
+      },
+      '/check': {
+        target: 'http://127.0.0.1:6300',
+        changeOrigin: true,
+      },
+    },
   },
 }))

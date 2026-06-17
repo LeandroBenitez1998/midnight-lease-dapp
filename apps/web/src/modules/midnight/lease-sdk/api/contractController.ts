@@ -2,7 +2,6 @@ import { type ContractAddress } from '@midnight-ntwrk/compact-runtime'
 import { CompiledContract } from '@midnight-ntwrk/compact-js'
 import { contracts, types } from '@midnight-ntwrk/midnight-js'
 import * as Rx from 'rxjs'
-import { type Logger } from 'pino'
 import { Lease } from '@midnight-lease/lease-contract'
 
 import {
@@ -17,19 +16,13 @@ const leaseCompiledContract = CompiledContract.make('lease', Lease.Contract).pip
   CompiledContract.withCompiledFileAssets(`${window.location.origin}/midnight/lease`),
 )
 
-export interface ClaimLeaseReceipt {
+export interface VerifyAdultReceipt {
   readonly txHash: string
   readonly blockHeight: number | undefined
   readonly confirmedAt: string
 }
 
-export interface LeaseContractControllerInterface {
-  readonly deployedContractAddress: ContractAddress
-  readonly state$: Rx.Observable<Lease.Ledger>
-  claimLease: () => Promise<ClaimLeaseReceipt>
-}
-
-export class LeaseContractController implements LeaseContractControllerInterface {
+export class LeaseContractController {
   readonly deployedContractAddress: ContractAddress
   readonly state$: Rx.Observable<Lease.Ledger>
 
@@ -37,7 +30,6 @@ export class LeaseContractController implements LeaseContractControllerInterface
     public readonly contractPrivateStateId: typeof LeasePrivateStateId,
     public readonly deployedContract: DeployedLeaseContract,
     public readonly providers: LeaseProviders,
-    private readonly logger?: Logger,
   ) {
     this.deployedContractAddress = deployedContract.deployTxData.public.contractAddress
     this.state$ = providers.publicDataProvider
@@ -48,45 +40,58 @@ export class LeaseContractController implements LeaseContractControllerInterface
       )
   }
 
-  async claimLease(): Promise<ClaimLeaseReceipt> {
-    this.logger?.info('claiming lease')
-
-    const txData = await this.deployedContract.callTx.claimLease()
-    const receipt: ClaimLeaseReceipt = {
+  private async callTx(method: string, ...args: unknown[]): Promise<VerifyAdultReceipt> {
+    const txData = await (this.deployedContract.callTx as Record<string, (...args: unknown[]) => Promise<{ public: { txHash: string; blockHeight?: number } }>>)[method](...args)
+    return {
       txHash: txData.public.txHash,
       blockHeight: txData.public.blockHeight,
       confirmedAt: new Date().toISOString(),
     }
+  }
 
-    this.logger?.trace(
-      {
-        claimLease: {
-          txHash: receipt.txHash,
-          blockHeight: receipt.blockHeight,
-        },
-      },
-      'Lease claim submitted',
-    )
+  registerRentalContract(contractIdHash: Uint8Array, contractHash: Uint8Array, landlordCommitment: Uint8Array, tenantCommitment: Uint8Array): Promise<VerifyAdultReceipt> {
+    return this.callTx('registerRentalContract', contractIdHash, contractHash, landlordCommitment, tenantCommitment)
+  }
 
-    return receipt
+  markContractSigned(contractIdHash: Uint8Array, signerCommitment: Uint8Array, signatureHash: Uint8Array): Promise<VerifyAdultReceipt> {
+    return this.callTx('markContractSigned', contractIdHash, signerCommitment, signatureHash)
+  }
+
+  markContractPaid(contractIdHash: Uint8Array, paymentHash: Uint8Array): Promise<VerifyAdultReceipt> {
+    return this.callTx('markContractPaid', contractIdHash, paymentHash)
+  }
+
+  activateContract(contractIdHash: Uint8Array): Promise<VerifyAdultReceipt> {
+    return this.callTx('activateContract', contractIdHash)
+  }
+
+  static async deploy(
+    contractPrivateStateId: typeof LeasePrivateStateId,
+    providers: LeaseProviders,
+  ): Promise<LeaseContractController> {
+    console.log('Deploying lease contract')
+
+    const deployedContract = await contracts.deployContract(providers, {
+      compiledContract: leaseCompiledContract,
+      privateStateId: contractPrivateStateId,
+      initialPrivateState: await LeaseContractController.getPrivateState(
+        contractPrivateStateId,
+        providers.privateStateProvider,
+        providers.walletProvider.getCoinPublicKey(),
+      ),
+    })
+
+    console.log('Lease contract deployed')
+
+    return new LeaseContractController(contractPrivateStateId, deployedContract, providers)
   }
 
   static async join(
     contractPrivateStateId: typeof LeasePrivateStateId,
     providers: LeaseProviders,
     contractAddress: ContractAddress,
-    logger?: Logger,
   ): Promise<LeaseContractController> {
-    logger?.info(
-      {
-        joinContract: {
-          action: 'Joining lease contract',
-          contractPrivateStateId,
-          contractAddress,
-        },
-      },
-      'Joining lease contract',
-    )
+    console.log('Joining lease contract')
 
     const deployedContract = await contracts.findDeployedContract(providers, {
       contractAddress,
@@ -99,18 +104,9 @@ export class LeaseContractController implements LeaseContractControllerInterface
       ),
     })
 
-    logger?.trace(
-      {
-        contractJoined: {
-          action: 'Lease contract joined',
-          contractPrivateStateId,
-          finalizedDeployTxData: deployedContract.deployTxData.public,
-        },
-      },
-      'Lease contract joined successfully',
-    )
+    console.log('Lease contract joined')
 
-    return new LeaseContractController(contractPrivateStateId, deployedContract, providers, logger)
+    return new LeaseContractController(contractPrivateStateId, deployedContract, providers)
   }
 
   private static async getPrivateState(

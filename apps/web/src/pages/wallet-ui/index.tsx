@@ -6,9 +6,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Link2, Server, Wifi, WifiOff, Wallet, RefreshCw, ExternalLink } from "lucide-react";
+import { useCallback, useState } from "react";
+import { Check, Copy, ExternalLink, Link2, RefreshCw, Rocket, Server, Wifi, WifiOff, Wallet } from "lucide-react";
 import { MidnightWallet } from "@/modules/midnight/wallet-widget/ui/midnightWallet";
 import { useWallet } from "@/modules/midnight/wallet-widget/hooks/useWallet";
+import { LeaseContractController } from "@/modules/midnight/lease-sdk/api/contractController";
+import { LeasePrivateStateId } from "@/modules/midnight/lease-sdk/api/common-types";
+import {
+  LEASE_PROVIDER_ACTION_MESSAGES,
+  useLeaseProviders,
+} from "@/modules/midnight/lease-sdk/hooks/useLeaseProviders";
 
 function AddressField({ label, value }: { label: string; value: string }) {
   return (
@@ -47,6 +54,18 @@ export function WalletUI() {
     dustBalance,
     unshieldedBalances,
   } = useWallet();
+  const [deploying, setDeploying] = useState(false);
+  const [deployMessage, setDeployMessage] = useState<string | null>(null);
+  const [deployError, setDeployError] = useState<string | null>(null);
+  const [deployedAddress, setDeployedAddress] = useState<string | null>(null);
+  const [copiedAddress, setCopiedAddress] = useState(false);
+  const handleProviderAction = useCallback((action: keyof typeof LEASE_PROVIDER_ACTION_MESSAGES) => {
+    const nextMessage = LEASE_PROVIDER_ACTION_MESSAGES[action];
+    if (nextMessage) {
+      setDeployMessage(nextMessage);
+    }
+  }, []);
+  const { providers } = useLeaseProviders({ onProviderAction: handleProviderAction });
 
   const endpoints = [
     { label: 'Substrate Node', value: serviceUriConfig?.substrateNodeUri },
@@ -54,6 +73,45 @@ export function WalletUI() {
     { label: 'Indexer (WebSocket)', value: serviceUriConfig?.indexerWsUri },
     { label: 'Proof Server', value: serviceUriConfig?.proverServerUri },
   ];
+
+  const deployLease = async () => {
+    if (status?.status !== "connected") {
+      setOpen(true);
+      return;
+    }
+
+    if (!providers) {
+      setDeployError("No pude inicializar los providers de Midnight. Verificá la wallet y el proof server.");
+      return;
+    }
+
+    setDeploying(true);
+    setDeployError(null);
+    setDeployMessage("Preparando deploy del contrato lease...");
+    setCopiedAddress(false);
+
+    try {
+      const controller = await LeaseContractController.deploy(LeasePrivateStateId, providers);
+      const nextAddress = controller.deployedContractAddress;
+      setDeployedAddress(nextAddress);
+      setDeployMessage("Contrato desplegado correctamente.");
+    } catch (error) {
+      setDeployError(error instanceof Error ? error.message : String(error));
+      setDeployMessage(null);
+    } finally {
+      setDeploying(false);
+    }
+  };
+
+  const copyDeployedAddress = async () => {
+    if (!deployedAddress) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(deployedAddress);
+    setCopiedAddress(true);
+    window.setTimeout(() => setCopiedAddress(false), 2000);
+  };
 
   return (
     <div className="container mx-auto px-4 sm:px-6 py-8 sm:py-12">
@@ -173,6 +231,63 @@ export function WalletUI() {
                     </div>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/60">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Rocket className="h-4 w-4" />
+                  Deploy manual del lease
+                </CardTitle>
+                <CardDescription>
+                  Este flujo usa la wallet conectada para desplegar el contrato lease. El script headless sigue disponible para automatizacion.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg border border-border/60 bg-muted/40 p-4 text-sm text-muted-foreground">
+                  1. Conectá la wallet con NIGHT y DUST disponible.
+                  <br />
+                  2. Confirmá la firma cuando la extension lo pida.
+                  <br />
+                  3. Copiá la direccion resultante para usarla como <code>VITE_CONTRACT_ADDRESS</code>.
+                </div>
+
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <Button onClick={deployLease} disabled={deploying} className="gap-2">
+                    <Rocket className="h-4 w-4" />
+                    {status?.status === "connected" ? "Desplegar contrato lease" : "Conectar wallet para desplegar"}
+                  </Button>
+                  <Button variant="outline" onClick={() => setOpen(true)} className="gap-2">
+                    <Wallet className="h-4 w-4" />
+                    Abrir selector de wallet
+                  </Button>
+                </div>
+
+                {deployMessage && (
+                  <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-400">
+                    {deployMessage}
+                  </div>
+                )}
+
+                {deployError && (
+                  <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                    {deployError}
+                  </div>
+                )}
+
+                {deployedAddress && (
+                  <div className="rounded-lg border border-border/60 bg-background p-4">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-foreground">Direccion del contrato</p>
+                      <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={copyDeployedAddress}>
+                        {copiedAddress ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                        {copiedAddress ? "Copiada" : "Copiar"}
+                      </Button>
+                    </div>
+                    <p className="select-all break-all font-mono text-xs text-foreground/80">{deployedAddress}</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

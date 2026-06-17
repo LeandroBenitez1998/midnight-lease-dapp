@@ -29,6 +29,11 @@ import {
 } from "./common-types";
 import { checkProofServerStatus } from "../utils/proofServer/utils";
 import { networkId } from "@midnight-ntwrk/midnight-js";
+import {
+  clearPersistedWalletConnection,
+  getPersistedWalletConnection,
+  setPersistedWalletConnection,
+} from "./walletPersistence";
 
 declare global {
   interface Window {
@@ -92,25 +97,25 @@ export class MidnightBrowserWallet {
   }
 
   static getMidnightWalletConnected(): { rdns: string | null; networkID: string | null } {
-    const rdns = window.localStorage.getItem("rdns-connected");
-    const networkID = window.localStorage.getItem("network-id");
-    return { rdns, networkID };
+    const connection = getPersistedWalletConnection(window.localStorage);
+    return {
+      rdns: connection?.rdns ?? null,
+      networkID: connection?.networkID ?? null,
+    };
   }
 
   static setMidnightWalletConnected(rdns: string, networkID: string, logger?: Logger): void {
     if (logger) {
       logger.trace(`Setting wallet auto connect to ${rdns}`);
     }
-    window.localStorage.setItem("rdns-connected", rdns);
-    window.localStorage.setItem("network-id", networkID);
+    setPersistedWalletConnection(window.localStorage, { rdns, networkID });
   }
 
   static deleteMidnightWalletConnected(logger?: Logger): void {
     if (logger) {
       logger.trace("Deleting wallet auto connect ");
     }
-    window.localStorage.removeItem("rdns-connected");
-    window.localStorage.removeItem("network-id");
+    clearPersistedWalletConnection(window.localStorage);
   }
 
   static async connectToWallet(
@@ -168,9 +173,9 @@ export class MidnightBrowserWallet {
           const shieldedBalances = await connectedAPI.getShieldedBalances();
           const unshieldedAddress = await connectedAPI.getUnshieldedAddress();
           const unshieldedBalances = await connectedAPI.getUnshieldedBalances();
-          const proofServerOnline = await checkProofServerStatus(
-            serviceUriConfig.proverServerUri
-          );
+          const proofServerUrl = import.meta.env.VITE_PROOF_SERVER_URL?.trim()
+            || serviceUriConfig.proverServerUri;
+          const proofServerOnline = await checkProofServerStatus(proofServerUrl);
 
           logger?.info("Connected to wallet");
 

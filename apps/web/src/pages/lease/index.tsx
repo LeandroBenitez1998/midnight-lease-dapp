@@ -1,172 +1,37 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 import * as Rx from 'rxjs'
-import {
-  BadgeCheck,
-  Check,
-  CheckCircle2,
-  Clock3,
-  Download,
-  FileText,
-  Loader2,
-  Lock,
-  Network,
-  Settings,
-} from 'lucide-react'
+import { Download, FileText, Loader2, Network, PenTool, Receipt, ShieldCheck } from 'lucide-react'
+
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { CompiledContract } from '@midnight-ntwrk/compact-js'
-import { fromHex, toHex, type ContractAddress } from '@midnight-ntwrk/compact-runtime'
-import { contracts, type types } from '@midnight-ntwrk/midnight-js'
-import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider'
-import * as ledger from '@midnight-ntwrk/ledger-v8'
-import {
-  Lease,
-  type LeasePrivateState,
-  createPrivateState,
-} from '@midnight-lease/lease-contract'
-import { formatHex } from '@/modules/midnight/lease-sdk/api/common-types'
-import { useWallet } from '@/modules/midnight/wallet-widget/hooks/useWallet'
-import { inMemoryPrivateStateProvider } from '@/modules/midnight/wallet-widget/utils/customImplementations/in-memory-private-state-provider'
-import { proofClient } from '@/modules/midnight/wallet-widget/utils/providersWrappers/proofClient'
-import { CachedFetchZkConfigProvider } from '@/modules/midnight/wallet-widget/utils/providersWrappers/zkConfigProvider'
-import ScreenMain from '@/modules/midnight/wallet-widget/ui/screen-main'
-import { networkID } from '@/modules/midnight/wallet-widget/ui/common/common-values'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/modules/midnight/wallet-widget/ui/common/dialog'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { SignaturePad } from '@/components/signature-pad'
 import { cn } from '@/lib/utils'
-
-const stepLabels = [
-  'Conectar wallet',
-  'Completar identidad',
-  'Revelar datos públicos',
-  'Generar prueba ZK',
-  'Firmar contrato',
-] as const
-
-const privacyPrivate = [
-  ['Nombre Completo', 'Oculto'],
-  ['DNI / ID', 'Oculto'],
-  ['Fecha de nacimiento', 'Oculta'],
-  ['Edad calculada', 'Oculta'],
-] as const
-
-const signatureRevealItems = [
-  'Hash del contrato',
-  'Monto',
-  'Fecha',
-  'Prueba local de edad',
-] as const
-
-const leaseStateLabels: Record<Lease.LeaseState, string> = {
-  [Lease.LeaseState.OFFERED]: 'Pendiente de firma',
-  [Lease.LeaseState.CLAIMED]: 'Firmado por inquilino',
-  [Lease.LeaseState.ACTIVE]: 'Activo',
-  [Lease.LeaseState.IN_ARREARS]: 'En mora',
-  [Lease.LeaseState.TERMINATED]: 'Terminado',
-  [Lease.LeaseState.COMPLETED]: 'Completado',
-}
-
-function formatShortText(value: string | null, visible = 8): string {
-  if (!value) {
-    return 'Pendiente'
-  }
-
-  if (value.length <= visible * 2 + 3) {
-    return value
-  }
-
-  return `${value.slice(0, visible)}...${value.slice(-visible)}`
-}
-
-function formatLeaseMoney(value: bigint | null, fallback: string): string {
-  return value === null ? fallback : `USD ${value.toString()}`
-}
-
-function sanitizeArgentinianDni(value: string): string {
-  return value.replace(/\D+/g, '')
-}
-
-function isValidArgentinianDni(value: string): boolean {
-  return /^\d{7,8}$/.test(value)
-}
-
-function calculateAgeFromBirthDate(value: string): number | null {
-  if (!value) {
-    return null
-  }
-
-  const [yearText, monthText, dayText] = value.split('-')
-  const year = Number(yearText)
-  const month = Number(monthText)
-  const day = Number(dayText)
-
-  if (!year || !month || !day) {
-    return null
-  }
-
-  const birthDate = new Date(year, month - 1, day)
-
-  if (
-    Number.isNaN(birthDate.getTime()) ||
-    birthDate.getFullYear() !== year ||
-    birthDate.getMonth() !== month - 1 ||
-    birthDate.getDate() !== day
-  ) {
-    return null
-  }
-
-  const today = new Date()
-  let age = today.getFullYear() - year
-  const monthDifference = today.getMonth() - (month - 1)
-
-  if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < day)) {
-    age -= 1
-  }
-
-  return age
-}
-
-function createLocalProofId(): string {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID()
-  }
-
-  return `proof-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
-}
-
-function maskDni(value: string): string {
-  if (!value) {
-    return 'Pendiente'
-  }
-
-  if (value.length <= 4) {
-    return `${value.slice(0, 2)}••`
-  }
-
-  return `${value.slice(0, 2)}••••${value.slice(-2)}`
-}
+import {
+  buildLeaseSignatureArtifacts,
+  buildRentalContractArtifacts,
+  type LeaseSignatureArtifacts,
+  type RentalContractArtifacts,
+} from '@/features/lease-signature/signature-payload'
+import { CompiledContract } from '@midnight-ntwrk/compact-js'
+import { fromHex, type ContractAddress } from '@midnight-ntwrk/compact-runtime'
+import { contracts } from '@midnight-ntwrk/midnight-js'
+import { Lease, createPrivateState } from '@midnight-lease/lease-contract'
+import { useWallet } from '@/modules/midnight/wallet-widget/hooks/useWallet'
+import { useLeaseProviders } from '@/modules/midnight/lease-sdk/hooks/useLeaseProviders'
+import { type DeployedLeaseContract } from '@/modules/midnight/lease-sdk/api/common-types'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/modules/midnight/wallet-widget/ui/common/dialog'
+import { networkID } from '@/modules/midnight/wallet-widget/ui/common/common-values'
+import ScreenMain from '@/modules/midnight/wallet-widget/ui/screen-main'
+import { sendNightViaZswap, LANDLORD_ADDRESS } from '@/modules/midnight/lease-sdk/api/nightTransfer'
 
 const LEASE_PRIVATE_STATE_ID = 'leasePrivateState' as const
 
-type BalanceUnsealedTransactionApi = {
-  balanceUnsealedTransaction: (tx: string, options: Record<string, never>) => Promise<{ tx: string }>
-}
+const leaseCompiledContract = CompiledContract.make('lease', Lease.Contract).pipe(
+  CompiledContract.withVacantWitnesses,
+  CompiledContract.withCompiledFileAssets(`${window.location.origin}/midnight/lease`),
+)
 
-type LeaseTxResult = {
+type ActionTxResult = {
   public?: {
     txHash?: string
     txId?: string
@@ -174,1116 +39,178 @@ type LeaseTxResult = {
   }
 }
 
-type EligibilityFormState = {
-  fullName: string
-  dni: string
-  birthDate: string
-}
-
-type EligibilityProofState = {
-  proofId: string
-  generatedAt: string
-  age: number
-}
-
-const leaseCompiledContract = CompiledContract.make('lease', Lease.Contract).pipe(
-  CompiledContract.withVacantWitnesses,
-  CompiledContract.withCompiledFileAssets(`${window.location.origin}/midnight/lease`),
-)
-
-type StepStatus = 'completed' | 'active' | 'pending'
-type TimelineStatus = StepStatus
-
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-function downloadJson(filename: string, payload: unknown) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: 'application/json',
-  })
-  const url = window.URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  window.URL.revokeObjectURL(url)
-}
-
-function getStepStatus(
-  index: number,
-  walletConnected: boolean,
-  proofGenerated: boolean,
-  signed: boolean,
-): StepStatus {
-  if (signed) return 'completed'
-  if (!walletConnected) return index === 0 ? 'active' : 'pending'
-  if (proofGenerated) {
-    if (index < 4) return 'completed'
-    if (index === 4) return 'active'
-  }
-  if (index === 0) return 'completed'
-  if (index === 1) return 'active'
-  return 'pending'
-}
-
-function getTimelineStatus(
-  index: number,
-  walletConnected: boolean,
-  proofGenerated: boolean,
-  signed: boolean,
-): TimelineStatus {
-  if (signed) return 'completed'
-  if (!walletConnected) return index === 0 ? 'active' : 'pending'
-  if (proofGenerated) {
-    if (index < 4) return 'completed'
-    if (index === 4) return 'active'
-  }
-  if (index === 0) return 'completed'
-  if (index === 1) return 'active'
-  return 'pending'
-}
-
-function AppHeader({
-  walletConnected,
-  walletConnecting,
-  walletAddress,
-  onConnectWallet,
-}: {
-  walletConnected: boolean
-  walletConnecting: boolean
-  walletAddress: string | null
-  onConnectWallet: () => void
-}) {
-  return (
-    <header className="sticky top-0 z-40 border-b border-neutral-200 bg-white/95 backdrop-blur-sm">
-      <div className="mx-auto flex max-w-[1280px] flex-col gap-4 px-4 py-4 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center justify-between gap-4 lg:justify-start">
-          <Link to="/" className="text-sm font-semibold tracking-[0.28em] text-black">
-            MIDNIGHT LEASE
-          </Link>
-
-          <div className="flex items-center gap-3 lg:hidden">
-            <NetworkBadge />
-            <WalletConnectButton
-              connected={walletConnected}
-              connecting={walletConnecting}
-              walletAddress={walletAddress}
-              onClick={onConnectWallet}
-            />
-          </div>
-        </div>
-
-        <nav className="flex items-center gap-4 overflow-x-auto text-sm text-black/70 sm:gap-6">
-          <Link to="/" className="whitespace-nowrap text-black transition-colors hover:text-black/70">
-            Dashboard
-          </Link>
-          <a href="#contract-status" className="whitespace-nowrap transition-colors hover:text-black">
-            Contracts
-          </a>
-          <a href="#proof-section" className="whitespace-nowrap transition-colors hover:text-black">
-            Verifications
-          </a>
-          <a href="#signature-section" className="whitespace-nowrap transition-colors hover:text-black">
-            Wallet
-          </a>
-        </nav>
-
-        <div className="hidden items-center gap-3 lg:flex">
-          <NetworkBadge />
-          <WalletConnectButton
-            connected={walletConnected}
-            connecting={walletConnecting}
-            walletAddress={walletAddress}
-            onClick={onConnectWallet}
-          />
-        </div>
-      </div>
-    </header>
-  )
-}
-
-function NetworkBadge() {
-  return (
-    <Badge variant="outline" className="gap-2 border-neutral-300 bg-white px-3 py-1.5 text-[11px] text-black">
-      <span className="h-2 w-2 rounded-full bg-black" />
-      Midnight Preprod
-    </Badge>
-  )
-}
-
-function WalletConnectButton({
-  connected,
-  connecting,
-  walletAddress,
-  onClick,
-}: {
-  connected: boolean
-  connecting: boolean
-  walletAddress: string | null
-  onClick: () => void
-}) {
-  const label = connecting
-    ? 'Conectando...'
-    : connected
-      ? walletAddress
-        ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`
-        : 'Wallet conectada'
-      : 'Conectar wallet'
-
-  return (
-    <Button
-      type="button"
-      onClick={onClick}
-      variant="default"
-      aria-pressed={connected}
-      className={cn(
-        'border-neutral-300 shadow-none',
-        connected ? 'bg-white text-black hover:bg-black hover:text-white' : 'bg-black text-white hover:bg-black/90',
-      )}
-    >
-      {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-      {label}
-    </Button>
-  )
-}
-
-function StatusBadge({
-  children,
-  tone,
-}: {
-  children: string
-  tone: 'solid' | 'outline' | 'subtle'
-}) {
-  return (
-    <Badge variant={tone} className="min-w-0 whitespace-nowrap">
-      {children}
-    </Badge>
-  )
-}
-
-function StepDot({ status }: { status: StepStatus }) {
-  if (status === 'completed') {
-    return (
-      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black text-white">
-        <Check className="h-4 w-4" />
-      </span>
-    )
-  }
-
-  if (status === 'active') {
-    return (
-      <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-black bg-white">
-        <span className="h-2.5 w-2.5 rounded-full bg-black" />
-      </span>
-    )
-  }
-
-  return (
-    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-neutral-300 bg-neutral-100">
-      <span className="h-2.5 w-2.5 rounded-full bg-neutral-300" />
-    </span>
-  )
-}
-
-function TimelineDot({ status }: { status: TimelineStatus }) {
-  if (status === 'completed') {
-    return (
-      <span className="flex h-5 w-5 items-center justify-center rounded-full border border-black bg-white">
-        <span className="h-2.5 w-2.5 rounded-full bg-black" />
-      </span>
-    )
-  }
-
-  if (status === 'active') {
-    return (
-      <span className="flex h-5 w-5 items-center justify-center rounded-full border border-black bg-white">
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-black" />
-      </span>
-    )
-  }
-
-  return (
-    <span className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-300 bg-white">
-      <span className="h-2 w-2 rounded-full bg-neutral-300" />
-    </span>
-  )
-}
-
-function SectionCard({
-  title,
-  description,
-  children,
-  id,
-  className,
-}: {
-  title: string
-  description?: string
-  children: ReactNode
-  id?: string
-  className?: string
-}) {
-  return (
-    <Card id={id} className={cn('rounded-[22px] border-neutral-200 bg-white shadow-none', className)}>
-      <CardHeader className="gap-2 border-b border-neutral-200 pb-5">
-        <CardTitle className="text-base font-semibold tracking-tight text-black">{title}</CardTitle>
-        {description ? <CardDescription className="text-sm text-black/60">{description}</CardDescription> : null}
-      </CardHeader>
-      <CardContent className="pt-6">{children}</CardContent>
-    </Card>
-  )
-}
-
-function LeaseHero({
-  onConnectWallet,
-  onReviewContract,
-}: {
-  onConnectWallet: () => void
-  onReviewContract: () => void
-}) {
-  return (
-    <Card className="rounded-[28px] border-neutral-200 bg-white shadow-none">
-      <CardContent className="space-y-7 p-8 sm:p-10">
-        <div className="space-y-4">
-          <p className="text-xs font-medium uppercase tracking-[0.24em] text-black/55">Legaltech · Privacy by design</p>
-          <div className="space-y-3">
-            <h1 className="max-w-4xl text-3xl font-semibold tracking-tight text-black sm:text-5xl">
-              Firmá tu contrato de alquiler preservando tu privacidad
-            </h1>
-            <p className="max-w-3xl text-base leading-7 text-black/70 sm:text-lg">
-              Revelá solo los datos necesarios, generá una prueba verificable y firmá el contrato de forma segura en Midnight Network.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <Button
-            type="button"
-            onClick={onReviewContract}
-            className="bg-black text-white shadow-none hover:bg-black/90"
-          >
-            Revisar contrato
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onConnectWallet}
-            className="border-neutral-300 bg-white text-black shadow-none hover:bg-black hover:text-white"
-          >
-            Conectar wallet
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function LeaseStepper({
-  walletConnected,
-  proofGenerated,
-  signed,
-}: {
-  walletConnected: boolean
-  proofGenerated: boolean
-  signed: boolean
-}) {
-  return (
-    <Card className="rounded-[22px] border-neutral-200 bg-white shadow-none">
-      <CardContent className="overflow-x-auto p-6">
-        <div className="flex min-w-max items-center gap-4">
-          {stepLabels.map((label, index) => {
-            const status = getStepStatus(index, walletConnected, proofGenerated, signed)
-            return (
-              <div key={label} className="flex items-center gap-4">
-                <div className="flex items-center gap-3">
-                  <StepDot status={status} />
-                  <span
-                    className={cn(
-                      'whitespace-nowrap text-sm font-medium',
-                      status === 'completed' || status === 'active' ? 'text-black' : 'text-black/45',
-                    )}
-                  >
-                    {label}
-                  </span>
-                </div>
-                {index < stepLabels.length - 1 ? (
-                  <div
-                    className={cn(
-                      'h-px w-12',
-                      status === 'completed' ? 'bg-black' : 'bg-neutral-300',
-                    )}
-                  />
-                ) : null}
-              </div>
-            )
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function ContractStatusCard({
-  signed,
-  contractHash,
-  monthlyRent,
-  depositAmount,
-  termMonths,
-  leaseStateLabel,
-}: {
-  signed: boolean
-  contractHash: string
+type RentalFormState = {
+  landlordName: string
+  landlordDocument: string
+  tenantName: string
+  tenantDocument: string
+  tenantWallet: string
+  propertyAddress: string
   monthlyRent: string
-  depositAmount: string
-  termMonths: string
-  leaseStateLabel: string
-}) {
-  const contractRows = [
-    { label: 'Propiedad', value: 'Departamento en Palermo', badge: 'Público', tone: 'subtle' as const },
-    { label: 'Locador', value: 'Verificado', badge: 'Verificado', tone: 'solid' as const },
-    { label: 'Inquilino', value: 'Identidad privada', badge: 'Privado', tone: 'outline' as const },
-    { label: 'Hash del contrato', value: contractHash, badge: 'Público', tone: 'subtle' as const },
-    { label: 'Duración', value: termMonths, badge: 'Público', tone: 'subtle' as const },
-    { label: 'Monto mensual público', value: monthlyRent, badge: 'Público', tone: 'outline' as const },
-    { label: 'Depósito', value: depositAmount, badge: 'Verificado', tone: 'solid' as const },
-    { label: 'Estado', value: leaseStateLabel, badge: signed ? 'Firmado' : 'Pendiente', tone: signed ? 'solid' : 'subtle' as const },
-  ] as const
-
-  return (
-    <SectionCard
-      id="contract-status"
-      title="Estado del contrato"
-      description="Resumen legal monocromático con el mínimo de datos públicos necesarios."
-    >
-      <div className="space-y-3">
-        {contractRows.map((row) => (
-          <div key={row.label} className="flex items-start justify-between gap-4 border-b border-neutral-200 py-3 last:border-b-0 last:pb-0">
-            <div className="min-w-0 space-y-1">
-              <p className="text-sm font-medium text-black/60">{row.label}</p>
-              <p className="text-base font-medium text-black">{row.value}</p>
-            </div>
-            <StatusBadge tone={row.tone}>{row.badge}</StatusBadge>
-          </div>
-        ))}
-      </div>
-    </SectionCard>
-  )
+  currency: string
+  durationMonths: string
+  deposit: string
+  totalDue: string
+  landlordSignatureDataUrl: string | null
+  tenantSignatureDataUrl: string | null
 }
 
-function PrivacyPanel({
-  walletAddress,
-  monthlyRent,
-  contractHash,
-  proofGenerated,
-}: {
-  walletAddress: string | null
-  monthlyRent: string
-  contractHash: string
-  proofGenerated: boolean
-}) {
-  const walletValue = walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : 'Pendiente'
-  const privacyPublic = [
-    ['Wallet Address', walletValue],
-    ['Monto Mensual', monthlyRent],
-    ['Hash del Contrato', contractHash],
-    ['Prueba ZK Válida', proofGenerated ? 'Sí' : 'Pendiente'],
-  ] as const
-
-  return (
-    <SectionCard
-      id="privacy-panel"
-      title="Esquema de Privacidad"
-      description="La identidad completa y los datos financieros sensibles permanecen fuera de la cadena."
-    >
-      <div className="grid gap-0 md:grid-cols-2">
-        <div className="border-b border-neutral-200 pb-6 md:border-b-0 md:border-r md:pr-6">
-          <div className="mb-4 flex items-center gap-2 text-black/70">
-            <Lock className="h-4 w-4" />
-            <h3 className="text-xs font-semibold uppercase tracking-[0.2em]">Datos Privados (Off-chain)</h3>
-          </div>
-          <dl className="space-y-3">
-            {privacyPrivate.map(([label, value]) => (
-              <div key={label} className="flex items-center justify-between gap-4 border-b border-neutral-200 py-2 last:border-b-0">
-                <dt className="text-sm text-black/60">{label}</dt>
-                <dd className="text-sm font-medium text-black">{value}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-
-        <div className="pt-6 md:pl-6 md:pt-0">
-          <div className="mb-4 flex items-center gap-2 text-black/70">
-            <FileText className="h-4 w-4" />
-            <h3 className="text-xs font-semibold uppercase tracking-[0.2em]">Datos Públicos (On-chain)</h3>
-          </div>
-          <dl className="space-y-3">
-            {privacyPublic.map(([label, value]) => (
-              <div key={label} className="flex items-center justify-between gap-4 border-b border-neutral-200 py-2 last:border-b-0">
-                <dt className="text-sm text-black/60">{label}</dt>
-                <dd className="text-sm font-medium text-black text-right font-mono break-all">
-                  {value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-          <p className="mt-5 text-sm leading-6 text-black/65">
-            Tu identidad completa y tus datos financieros sensibles no se publican.
-          </p>
-        </div>
-      </div>
-    </SectionCard>
-  )
+const initialFormState: RentalFormState = {
+  landlordName: '',
+  landlordDocument: '',
+  tenantName: '',
+  tenantDocument: '',
+  tenantWallet: '',
+  propertyAddress: '',
+  monthlyRent: '',
+  currency: 'USD',
+  durationMonths: '12',
+  deposit: '',
+  totalDue: '',
+  landlordSignatureDataUrl: null,
+  tenantSignatureDataUrl: null,
 }
 
-function ProofGenerationCard({
-  walletConnected,
-  proofGenerated,
-  isGeneratingProof,
-  signed,
-  eligibilityForm,
-  eligibilityProof,
-  eligibilityError,
-  onEligibilityFieldChange,
-  onGenerateProof,
-}: {
-  walletConnected: boolean
-  proofGenerated: boolean
-  isGeneratingProof: boolean
-  signed: boolean
-  eligibilityForm: EligibilityFormState
-  eligibilityProof: EligibilityProofState | null
-  eligibilityError: string | null
-  onEligibilityFieldChange: (field: keyof EligibilityFormState, value: string) => void
-  onGenerateProof: () => void
-}) {
-  const eligibilityChecklist = [
-    {
-      label: 'Nombre completo cargado',
-      done: eligibilityForm.fullName.trim().length > 1,
-    },
-    {
-      label: 'DNI argentino válido',
-      done: isValidArgentinianDni(sanitizeArgentinianDni(eligibilityForm.dni)),
-    },
-    {
-      label: 'Fecha de nacimiento cargada',
-      done: Boolean(eligibilityForm.birthDate),
-    },
-    {
-      label: 'Mayor de edad verificado',
-      done: Boolean(eligibilityProof),
-    },
-  ] as const
-
-  const helperTone = eligibilityError
-    ? 'border-red-200 bg-red-50 text-red-700'
-    : isGeneratingProof || proofGenerated
-      ? 'border-neutral-200 bg-white text-black'
-      : 'border-neutral-200 bg-neutral-50 text-black/60'
-
-  const helperIcon = eligibilityError ? (
-    <span className="flex h-4 w-4 items-center justify-center rounded-full border border-red-300 text-[10px] font-bold leading-none text-red-600">
-      !
-    </span>
-  ) : isGeneratingProof ? (
-    <Loader2 className="h-4 w-4 animate-spin" />
-  ) : proofGenerated ? (
-    <CheckCircle2 className="h-4 w-4" />
-  ) : (
-    <Clock3 className="h-4 w-4" />
-  )
-
-  const helperText = eligibilityError
-    ? eligibilityError
-    : isGeneratingProof
-      ? 'Calculando la verificación local con tu DNI y fecha de nacimiento...'
-      : proofGenerated
-        ? 'Tu mayoría de edad quedó validada localmente. Ya podés continuar con la firma.'
-        : walletConnected
-          ? 'La verificación se calcula localmente en este navegador antes de habilitar la firma.'
-          : 'Conectá tu wallet para continuar con la firma del lease después de validar tu edad.'
-
-  return (
-    <SectionCard
-      id="proof-section"
-      title="Prueba de elegibilidad"
-      description="Cargá nombre, DNI argentino y fecha de nacimiento para calcular una verificación local de mayoría de edad."
-    >
-      <div className="space-y-6">
-        <div className="grid gap-4 lg:grid-cols-3">
-          <label className="block">
-            <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Nombre completo</span>
-            <input
-              type="text"
-              autoComplete="name"
-              maxLength={80}
-              value={eligibilityForm.fullName}
-              onChange={(event) => onEligibilityFieldChange('fullName', event.currentTarget.value)}
-              placeholder="Leandro Thomas"
-              className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition placeholder:text-black/30 focus:border-black focus:ring-2 focus:ring-black/10"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">DNI argentino</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              autoComplete="off"
-              maxLength={8}
-              value={eligibilityForm.dni}
-              onChange={(event) => onEligibilityFieldChange('dni', event.currentTarget.value)}
-              placeholder="12345678"
-              className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition placeholder:text-black/30 focus:border-black focus:ring-2 focus:ring-black/10"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Fecha de nacimiento</span>
-            <input
-              type="date"
-              value={eligibilityForm.birthDate}
-              onChange={(event) => onEligibilityFieldChange('birthDate', event.currentTarget.value)}
-              className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10"
-            />
-          </label>
-        </div>
-
-        <p className="text-sm leading-6 text-black/60">
-          Usamos estos datos solo para calcular la mayoría de edad en tu navegador. El nombre y el DNI no salen del flujo local de demo.
-        </p>
-
-        <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-          <p className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Documento cargado</p>
-          <p className="mt-2 text-sm font-medium text-black">{maskDni(sanitizeArgentinianDni(eligibilityForm.dni))}</p>
-        </div>
-
-        <ul className="space-y-3">
-          {eligibilityChecklist.map((item) => (
-            <li key={item.label} className="flex items-center gap-3 text-sm text-black/80">
-              <span
-                className={cn(
-                  'flex h-5 w-5 items-center justify-center rounded-full border',
-                  item.done ? 'border-black bg-black text-white' : 'border-neutral-300 bg-white text-black/25',
-                )}
-              >
-                {item.done ? <Check className="h-3.5 w-3.5" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
-              </span>
-              {item.label}
-            </li>
-          ))}
-        </ul>
-
-        {eligibilityProof ? (
-          <div className="rounded-2xl border border-neutral-200 bg-white p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Prueba local generada</p>
-                <p className="text-sm text-black/65">La edad se verificó localmente sin enviar tu DNI fuera del navegador.</p>
-              </div>
-              <StatusBadge tone="solid">Mayor de edad</StatusBadge>
-            </div>
-
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {[
-                ['Edad calculada', `${eligibilityProof.age} años`],
-                ['Validada', eligibilityProof.generatedAt],
-                ['Prueba local', formatShortText(eligibilityProof.proofId, 10)],
-                ['Fuente', 'DNI + fecha de nacimiento'],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-2xl border border-neutral-200 p-3">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-black/45">{label}</p>
-                  <p className="mt-2 text-sm font-medium text-black break-all">{value}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="space-y-3">
-          <Button
-            type="button"
-            onClick={onGenerateProof}
-            disabled={!walletConnected || isGeneratingProof || proofGenerated || signed}
-            className="bg-black text-white shadow-none hover:bg-black/90 disabled:bg-black disabled:text-white"
-          >
-            {isGeneratingProof ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {proofGenerated ? 'Prueba generada' : 'Generar prueba ZK'}
-          </Button>
-
-          <div
-            aria-live="polite"
-            className={cn(
-              'flex items-center gap-2 rounded-xl border px-4 py-3 text-sm',
-              helperTone,
-            )}
-          >
-            {helperIcon}
-            <span>{helperText}</span>
-          </div>
-        </div>
-      </div>
-    </SectionCard>
-  )
+function formatShort(value: string | null | undefined, visible = 10): string {
+  if (!value) return 'Pendiente'
+  if (value.length <= visible * 2 + 3) return value
+  return `${value.slice(0, visible)}...${value.slice(-visible)}`
 }
 
-function SignatureCard({
-  walletAddress,
-  contractAddress,
-  contractHash,
-  proofGenerated,
-  signed,
-  signedAt,
-  signingReady,
-  leaseTxHash,
-  onOpenConfirm,
-  onDownloadCopy,
-}: {
-  walletAddress: string | null
-  contractAddress: string | null
-  contractHash: string
-  proofGenerated: boolean
-  signed: boolean
-  signedAt: string | null
-  signingReady: boolean
-  leaseTxHash: string | null
-  onOpenConfirm: () => void
-  onDownloadCopy: () => void
-}) {
-  const timestamp = signed ? signedAt ?? 'Registrado en cadena' : 'Pendiente'
-
-  return (
-    <SectionCard
-      id="signature-section"
-      title="Firma del contrato"
-      description="La firma final solo se habilita después de generar la prueba ZK."
-    >
-      <div className="space-y-6">
-        <div className="grid gap-3 sm:grid-cols-2">
-          {[
-            ['Hash del contrato', contractHash],
-            ['Smart contract', contractAddress ?? 'Pendiente de contrato'],
-            ['Wallet firmante', walletAddress ? formatShortText(walletAddress, 10) : 'Sin wallet'],
-            ['Timestamp', timestamp],
-            ['Tx Hash', formatShortText(leaseTxHash, 10)],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-2xl border border-neutral-200 bg-white p-4">
-              <p className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">{label}</p>
-              <p className="mt-2 text-sm font-medium text-black break-all font-mono">{value}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            type="button"
-            onClick={onOpenConfirm}
-            disabled={!proofGenerated || signed || !contractAddress || !signingReady}
-            className="bg-black text-white shadow-none hover:bg-black/90 disabled:bg-black/30"
-          >
-            Firmar con wallet
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onDownloadCopy}
-            className="border-neutral-300 bg-white text-black shadow-none hover:bg-black hover:text-white"
-          >
-            <Download className="h-4 w-4" />
-            Descargar copia verificable
-          </Button>
-        </div>
-
-        <div className={cn(
-          'rounded-2xl border p-4 text-sm',
-          signed ? 'border-neutral-200 bg-white text-black' : 'border-neutral-200 bg-neutral-50 text-black/60',
-        )}>
-          <div className="flex items-center gap-2">
-            <BadgeCheck className="h-4 w-4" />
-            <span className="font-medium">Estado del contrato</span>
-          </div>
-          <p className="mt-2">{signed ? 'Firmado' : 'Sin firmar'}</p>
-        </div>
-      </div>
-    </SectionCard>
-  )
+function bytesToHex(value: Uint8Array | null | undefined): string {
+  if (!value) return ''
+  return `0x${Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('')}`
 }
 
-function ConfirmSignatureModal({
-  open,
-  onOpenChange,
-  onConfirm,
-  signing,
-  contractHash,
-  monthlyRent,
-  walletAddress,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onConfirm: () => Promise<void>
-  signing: boolean
-  contractHash: string
-  monthlyRent: string
-  walletAddress: string | null
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl rounded-[28px] border-neutral-200 bg-white shadow-none">
-        <DialogHeader>
-          <DialogTitle className="text-xl font-semibold text-black">Confirmar firma privada</DialogTitle>
-          <DialogDescription className="max-w-xl text-sm leading-6 text-black/65">
-            Vas a firmar este contrato revelando únicamente los datos públicos autorizados. Tus datos sensibles permanecerán privados.
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-6 py-2">
-          <div className="grid gap-3 sm:grid-cols-3">
-            {[
-              ['Contrato', contractHash],
-              ['Monto', monthlyRent],
-              ['Wallet', walletAddress ?? 'Pendiente'],
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-2xl border border-neutral-200 p-4">
-                <p className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">{label}</p>
-                <p className="mt-2 text-sm font-medium text-black break-all">{value}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
-            <p className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Datos revelados</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {signatureRevealItems.map((item) => (
-                <StatusBadge key={item} tone="outline">
-                  {item}
-                </StatusBadge>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <DialogFooter className="gap-3 sm:gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            className="border-neutral-300 bg-white text-black shadow-none hover:bg-black hover:text-white"
-            disabled={signing}
-          >
-            Cancelar
-          </Button>
-          <Button
-            type="button"
-            onClick={onConfirm}
-            disabled={signing}
-            className="bg-black text-white shadow-none hover:bg-black/90 disabled:bg-black/50"
-          >
-            {signing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            Confirmar y firmar
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
+function formatBytes(value: Uint8Array | null | undefined): string {
+  return value ? formatShort(bytesToHex(value), 8) : 'Pendiente'
 }
 
-function SuccessState({
-  onViewContract,
-  onDownloadReceipt,
-  signedAt,
-  transactionId,
-  contractHash,
-  blockHeight,
-}: {
-  onViewContract: () => void
-  onDownloadReceipt: () => void
-  signedAt: string | null
-  transactionId: string | null
-  contractHash: string
-  blockHeight: number | null
-}) {
-  return (
-    <Card className="rounded-[28px] border-neutral-300 bg-white shadow-none">
-      <CardContent className="space-y-6 p-8">
-        <div className="flex items-start gap-4">
-          <span className="flex h-11 w-11 items-center justify-center rounded-full border border-black bg-white">
-            <CheckCircle2 className="h-5 w-5 text-black" />
-          </span>
-          <div className="space-y-2">
-            <h2 className="text-2xl font-semibold tracking-tight text-black">Contrato firmado exitosamente</h2>
-            <p className="max-w-2xl text-sm leading-6 text-black/65">
-              Firma verificada y registrada con un flujo privado. Los datos sensibles siguen fuera de la cadena.
-            </p>
-          </div>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {[
-            ['Firma', 'Verificada'],
-            ['Hash contrato', contractHash],
-            ['Transaction ID', formatShortText(transactionId, 10)],
-            ['Block Height', blockHeight?.toString() ?? 'Pendiente'],
-            ['Fecha de firma', signedAt ?? 'Pendiente'],
-          ].map(([label, value]) => (
-            <div key={label} className="rounded-2xl border border-neutral-200 p-4">
-              <p className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">{label}</p>
-              <p className="mt-2 text-sm font-medium text-black break-all">{value}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <Button type="button" variant="outline" onClick={onViewContract} className="border-neutral-300 bg-white text-black shadow-none hover:bg-black hover:text-white">
-            Ver contrato
-          </Button>
-          <Button type="button" variant="outline" onClick={onDownloadReceipt} className="border-neutral-300 bg-white text-black shadow-none hover:bg-black hover:text-white">
-            Descargar comprobante
-          </Button>
-          <Button asChild className="bg-black text-white shadow-none hover:bg-black/90">
-            <Link to="/">Volver al dashboard</Link>
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  )
+function hexToBytes32(value: string): Uint8Array {
+  return fromHex(value.replace(/^0x/, ''))
 }
 
-function ActivitySidebar({
-  walletConnected,
-  proofGenerated,
-  signed,
-}: {
-  walletConnected: boolean
-  proofGenerated: boolean
-  signed: boolean
-}) {
-  const timelineItems = [
-    'Wallet Conectada',
-    'Verificando Datos',
-    'Datos públicos seleccionados',
-    'Prueba ZK generada',
-    'Contrato firmado',
-    'Registro enviado al ledger',
-  ] as const
+function formatRentalStatus(value: Lease.RentalStatus | null | undefined): string {
+  switch (value) {
+    case Lease.RentalStatus.EMPTY:
+      return 'EMPTY'
+    case Lease.RentalStatus.REGISTERED:
+      return 'REGISTERED'
+    case Lease.RentalStatus.PARTIALLY_SIGNED:
+      return 'PARTIALLY_SIGNED'
+    case Lease.RentalStatus.SIGNED:
+      return 'SIGNED'
+    case Lease.RentalStatus.PAID:
+      return 'PAID'
+    case Lease.RentalStatus.ACTIVE:
+      return 'ACTIVE'
+    default:
+      return 'Pendiente'
+  }
+}
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function buildContractPreviewHtml(artifacts: RentalContractArtifacts): string {
+  const { payload } = artifacts
+  return `<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Midnight Lease Draft</title>
+    <style>
+      body { font-family: "Times New Roman", serif; margin: 48px; color: #111; }
+      h1 { font-size: 28px; margin-bottom: 8px; }
+      p { line-height: 1.6; }
+      .meta { margin: 24px 0; padding: 16px; border: 1px solid #d4d4d4; }
+      .section { margin-top: 28px; }
+      .line { border-bottom: 1px solid #111; height: 48px; margin-top: 20px; }
+      small { color: #555; }
+    </style>
+  </head>
+  <body>
+    <h1>Rental Agreement Draft</h1>
+    <p><small>Este documento queda local. On-chain sólo se registra el hash final y los commitments de las partes.</small></p>
+    <div class="meta">
+      <p><strong>Property:</strong> ${escapeHtml(payload.propertyAddress)}</p>
+      <p><strong>Landlord:</strong> ${escapeHtml(payload.landlordName)} (${escapeHtml(payload.landlordDocument)})</p>
+      <p><strong>Tenant:</strong> ${escapeHtml(payload.tenantName)} (${escapeHtml(payload.tenantDocument)})</p>
+      <p><strong>Monthly rent:</strong> ${escapeHtml(payload.monthlyRent)} ${escapeHtml(payload.currency)}</p>
+      <p><strong>Deposit:</strong> ${escapeHtml(payload.deposit)} ${escapeHtml(payload.currency)}</p>
+      <p><strong>Duration:</strong> ${escapeHtml(payload.durationMonths)} months</p>
+      <p><strong>Total due:</strong> ${escapeHtml(payload.totalDue)} ${escapeHtml(payload.currency)}</p>
+      <p><strong>Contract ID hash:</strong> ${escapeHtml(artifacts.contractIdHashHex)}</p>
+      <p><strong>Contract hash:</strong> ${escapeHtml(artifacts.contractHashHex)}</p>
+    </div>
+    <div class="section">
+      <p>Las partes aceptan que el contenido completo del contrato se mantiene local en sus dispositivos o en una copia descargada, mientras que Midnight funciona como un registro mínimo de hashes, commitments y estado.</p>
+    </div>
+    <div class="section">
+      <p><strong>Landlord signature</strong></p>
+      <div class="line"></div>
+    </div>
+    <div class="section">
+      <p><strong>Tenant signature</strong></p>
+      <div class="line"></div>
+    </div>
+  </body>
+</html>`
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string): void {
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function FlowStep({ active, done, title, detail }: { active?: boolean; done?: boolean; title: string; detail: string }) {
   return (
-    <aside className="lg:sticky lg:top-24 lg:self-start">
-      <Card className="rounded-[22px] border-neutral-200 bg-white shadow-none">
-        <CardContent className="space-y-6 p-6">
-          <div className="space-y-1">
-            <h2 className="text-xl font-semibold tracking-tight text-black">Activity Timeline</h2>
-            <p className="text-sm text-black/60">Private Verification Active</p>
-          </div>
-
-          <nav className="space-y-1">
-            {[
-              { label: 'Activity', icon: <Clock3 className="h-4 w-4" />, active: true },
-              { label: 'Vault', icon: <Lock className="h-4 w-4" />, href: '#privacy-panel' },
-              { label: 'Network', icon: <Network className="h-4 w-4" />, href: '#proof-section' },
-              { label: 'Settings', icon: <Settings className="h-4 w-4" />, href: '#signature-section' },
-            ].map((item) => {
-              const classes = cn(
-                'flex items-center gap-3 border-l-4 px-4 py-3 text-sm transition-colors',
-                item.active
-                  ? 'border-black bg-black text-white'
-                  : 'border-transparent text-black/65 hover:border-neutral-300 hover:bg-neutral-50 hover:text-black',
-              )
-
-              if (item.active) {
-                return (
-                  <button key={item.label} type="button" className={classes} aria-current="page">
-                    {item.icon}
-                    <span>{item.label}</span>
-                  </button>
-                )
-              }
-
-              return (
-                <a key={item.label} href={item.href} className={classes}>
-                  {item.icon}
-                  <span>{item.label}</span>
-                </a>
-              )
-            })}
-          </nav>
-
-          <div className="border-t border-neutral-200 pt-6">
-            <h3 className="mb-4 text-xs font-semibold uppercase tracking-[0.18em] text-black/50">Eventos Recientes</h3>
-            <div className="relative space-y-4 before:absolute before:bottom-0 before:left-2.5 before:top-1 before:w-px before:bg-neutral-200">
-              {timelineItems.map((label, index) => {
-                const status = getTimelineStatus(index, walletConnected, proofGenerated, signed)
-                return (
-                  <div key={label} className="relative flex items-start gap-3">
-                    <div className="relative z-10 mt-0.5">
-                      <TimelineDot status={status} />
-                    </div>
-                    <div
-                      className={cn(
-                        'flex-1 rounded-2xl border p-3',
-                        status === 'completed'
-                          ? 'border-black bg-white text-black'
-                          : status === 'active'
-                            ? 'border-black bg-neutral-50 text-black'
-                            : 'border-neutral-200 bg-white text-black/55',
-                      )}
-                    >
-                      <p className={cn('text-sm font-medium', status === 'pending' && 'text-black/60')}>
-                        {label}
-                      </p>
-                      <p className="mt-1 text-xs text-black/50">
-                        {status === 'completed' ? 'Completado' : status === 'active' ? 'En progreso...' : 'Pendiente'}
-                      </p>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </aside>
+    <div className={cn('rounded-2xl border p-4', done ? 'border-black bg-white' : active ? 'border-black bg-neutral-50' : 'border-neutral-200 bg-white')}>
+      <p className="text-sm font-semibold text-black">{title}</p>
+      <p className="mt-3 text-sm leading-6 text-black/60">{detail}</p>
+    </div>
   )
 }
 
 export function LeasePage() {
-  const [eligibilityForm, setEligibilityForm] = useState<EligibilityFormState>({
-    fullName: '',
-    dni: '',
-    birthDate: '',
-  })
-  const [eligibilityProof, setEligibilityProof] = useState<EligibilityProofState | null>(null)
-  const [eligibilityError, setEligibilityError] = useState<string | null>(null)
-  const [isGeneratingProof, setIsGeneratingProof] = useState(false)
-  const [confirmOpen, setConfirmOpen] = useState(false)
-  const [isSigning, setIsSigning] = useState(false)
-  const [leaseTxHash, setLeaseTxHash] = useState<string | null>(null)
-  const [leaseBlockHeight, setLeaseBlockHeight] = useState<number | null>(null)
-  const [signedAt, setSignedAt] = useState<string | null>(null)
-  const [leaseLedger, setLeaseLedger] = useState<Lease.Ledger | null>(null)
-  const eligibilityGenerationRef = useRef(0)
-  const contractSectionRef = useRef<HTMLDivElement | null>(null)
-  const {
-    open,
-    setOpen,
-    connectingWallet,
-    connectedAPI,
-    serviceUriConfig,
-    status,
-    unshieldedAddress,
-    shieldedAddresses,
-    error,
-  } = useWallet()
+  const [form, setForm] = useState<RentalFormState>(initialFormState)
+  const [preparedContract, setPreparedContract] = useState<RentalContractArtifacts | null>(null)
+  const [landlordSignatureArtifacts, setLandlordSignatureArtifacts] = useState<LeaseSignatureArtifacts | null>(null)
+  const [tenantSignatureArtifacts, setTenantSignatureArtifacts] = useState<LeaseSignatureArtifacts | null>(null)
+  const [actionStatus, setActionStatus] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [txRef, setTxRef] = useState<string | null>(null)
+  const [txBlock, setTxBlock] = useState<number | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [nightAmount, setNightAmount] = useState('')
+  const [zswapTxId, setZswapTxId] = useState<string | null>(null)
+  const { open, setOpen, connectingWallet, disconnect, connectedAPI, unshieldedAddress, shieldedAddresses, error } = useWallet()
+  const { providers } = useLeaseProviders()
 
-  const walletConnected = status?.status === 'connected'
+  const walletConnected = providers !== null
   const walletAddress = unshieldedAddress?.unshieldedAddress ?? null
   const contractAddress = import.meta.env.VITE_CONTRACT_ADDRESS?.trim() || ''
-  const proofGenerated = Boolean(eligibilityProof)
 
-  const leasePrivateStateProvider = useMemo(
-    () => inMemoryPrivateStateProvider<typeof LEASE_PRIVATE_STATE_ID, LeasePrivateState>(),
-    [],
-  )
-
-  const leaseZkConfigProvider = useMemo(() => {
-    if (!serviceUriConfig) return undefined
-    return new CachedFetchZkConfigProvider(
-      `${window.location.origin}/midnight/lease`,
-      fetch.bind(window),
-      () => {},
-    )
-  }, [serviceUriConfig])
-
-  const leasePublicDataProvider = useMemo(() => {
-    if (!serviceUriConfig) return undefined
-    return indexerPublicDataProvider(serviceUriConfig.indexerUri, serviceUriConfig.indexerWsUri)
-  }, [serviceUriConfig])
-
-  const leaseProofProvider = useMemo(() => {
-    if (!serviceUriConfig?.proverServerUri || !leaseZkConfigProvider) return undefined
-    return proofClient(serviceUriConfig.proverServerUri, leaseZkConfigProvider, () => {})
-  }, [leaseZkConfigProvider, serviceUriConfig])
-
-  const leaseWalletProvider = useMemo<types.WalletProvider | undefined>(() => {
-    if (!connectedAPI || !shieldedAddresses) return undefined
-
-    return {
-      getCoinPublicKey() {
-        return shieldedAddresses.shieldedCoinPublicKey
-      },
-      getEncryptionPublicKey() {
-        return shieldedAddresses.shieldedEncryptionPublicKey
-      },
-      async balanceTx(tx: ledger.Transaction<ledger.SignatureEnabled, ledger.Proof, ledger.PreBinding>) {
-        const serializedTx = toHex(tx.serialize())
-        const received = await (connectedAPI as BalanceUnsealedTransactionApi).balanceUnsealedTransaction(serializedTx, {})
-        return ledger.Transaction.deserialize<ledger.SignatureEnabled, ledger.Proof, ledger.Binding>(
-          'signature',
-          'proof',
-          'binding',
-          fromHex(received.tx),
-        )
-      },
-    }
-  }, [connectedAPI, shieldedAddresses])
-
-  const leaseMidnightProvider = useMemo<types.MidnightProvider | undefined>(() => {
-    if (!connectedAPI) return undefined
-
-    return {
-      async submitTx(tx: ledger.FinalizedTransaction) {
-        await connectedAPI.submitTransaction(toHex(tx.serialize()))
-        return tx.identifiers()[0]
-      },
-    }
-  }, [connectedAPI])
-
-  const leaseProviders = useMemo(() => {
-    if (
-      !leasePublicDataProvider ||
-      !leaseZkConfigProvider ||
-      !leaseProofProvider ||
-      !leaseWalletProvider ||
-      !leaseMidnightProvider
-    ) {
-      return undefined
-    }
-
-    return {
-      privateStateProvider: leasePrivateStateProvider,
-      publicDataProvider: leasePublicDataProvider,
-      zkConfigProvider: leaseZkConfigProvider,
-      proofProvider: leaseProofProvider,
-      walletProvider: leaseWalletProvider,
-      midnightProvider: leaseMidnightProvider,
-    }
-  }, [leaseMidnightProvider, leasePrivateStateProvider, leaseProofProvider, leasePublicDataProvider, leaseWalletProvider, leaseZkConfigProvider])
+  const [leaseLedger, setLeaseLedger] = useState<Lease.Ledger | null>(null)
 
   useEffect(() => {
-    const coinPublicKey = shieldedAddresses?.shieldedCoinPublicKey
-
-    if (!coinPublicKey) {
+    if (!providers?.publicDataProvider || !contractAddress) {
       setLeaseLedger(null)
-      setLeaseTxHash(null)
-      setLeaseBlockHeight(null)
-      setSignedAt(null)
       return
     }
 
-    void leasePrivateStateProvider.set(
-      LEASE_PRIVATE_STATE_ID,
-      createPrivateState(fromHex(coinPublicKey)),
-    )
-  }, [leasePrivateStateProvider, shieldedAddresses?.shieldedCoinPublicKey])
-
-  useEffect(() => {
-    if (!leasePublicDataProvider || !contractAddress) {
-      setLeaseLedger(null)
-      setLeaseTxHash(null)
-      setLeaseBlockHeight(null)
-      return
-    }
-
-    const subscription = leasePublicDataProvider
+    const subscription = providers.publicDataProvider
       .contractStateObservable(contractAddress as ContractAddress, { type: 'all' })
       .pipe(
         Rx.map((contractState) => Lease.ledger(contractState.data)),
@@ -1291,271 +218,482 @@ export function LeasePage() {
       )
       .subscribe({
         next: setLeaseLedger,
-        error: (leaseStateError) => {
-          console.error('Failed to follow lease contract state', leaseStateError)
+        error: (stateError) => {
+          console.error('Failed to follow lease contract state', stateError)
           setLeaseLedger(null)
         },
       })
 
     return () => subscription.unsubscribe()
-  }, [contractAddress, leasePublicDataProvider])
+  }, [contractAddress, providers])
 
-  useEffect(() => {
-    if (!leaseLedger?.tenantClaimed && signedAt) {
-      setSignedAt(null)
-      setLeaseTxHash(null)
-      setLeaseBlockHeight(null)
-    }
+  const currentStatus = leaseLedger?.status ?? Lease.RentalStatus.EMPTY
+  const registered = currentStatus >= Lease.RentalStatus.REGISTERED
+  const fullySigned = currentStatus >= Lease.RentalStatus.SIGNED
+  const paid = currentStatus >= Lease.RentalStatus.PAID
+  const active = currentStatus >= Lease.RentalStatus.ACTIVE
 
-    if (leaseLedger?.tenantClaimed && !signedAt) {
-      setSignedAt(new Date().toLocaleDateString('es-AR'))
-    }
-  }, [leaseLedger?.tenantClaimed, signedAt])
-
-  useEffect(() => {
-    if (leaseLedger?.tenantClaimed) {
-      setConfirmOpen(false)
-      setIsSigning(false)
-    }
-  }, [leaseLedger?.tenantClaimed])
-
-  useEffect(() => {
-    if (walletConnected || !eligibilityProof) {
-      return
-    }
-
-    eligibilityGenerationRef.current += 1
-    setEligibilityProof(null)
-    setEligibilityError(null)
-    setIsGeneratingProof(false)
-  }, [eligibilityProof, walletConnected])
-
-  useEffect(() => {
-    if (!proofGenerated && confirmOpen) {
-      setConfirmOpen(false)
-    }
-  }, [confirmOpen, proofGenerated])
-
-  const handleConnectWallet = () => {
-    setOpen(true)
+  function resetMessages() {
+    setActionError(null)
+    setActionStatus(null)
   }
 
-  const handleEligibilityFieldChange = (field: keyof EligibilityFormState, value: string) => {
-    const nextValue = field === 'dni' ? sanitizeArgentinianDni(value) : value
-
-    setEligibilityForm((current) => ({
-      ...current,
-      [field]: nextValue,
-    }))
-    setEligibilityProof(null)
-    setEligibilityError(null)
-    setIsGeneratingProof(false)
-    eligibilityGenerationRef.current += 1
+  function updateField<K extends keyof RentalFormState>(key: K, value: RentalFormState[K]) {
+    setForm((current) => ({ ...current, [key]: value }))
+    resetMessages()
   }
 
-  const handleGenerateProof = async () => {
-    if (!walletConnected || isGeneratingProof || proofGenerated || leaseLedger?.tenantClaimed) return
-
-    const fullName = eligibilityForm.fullName.trim()
-    const dni = sanitizeArgentinianDni(eligibilityForm.dni)
-    const age = calculateAgeFromBirthDate(eligibilityForm.birthDate)
-
-    if (fullName.length < 3) {
-      setEligibilityError('Ingresá tu nombre completo.')
-      return
+  async function getDeployedContract(): Promise<DeployedLeaseContract> {
+    if (!providers || !shieldedAddresses?.shieldedCoinPublicKey) {
+      throw new Error('Conectá una wallet compatible antes de enviar transacciones.')
     }
 
-    if (!isValidArgentinianDni(dni)) {
-      setEligibilityError('El DNI argentino debe tener 7 u 8 dígitos numéricos.')
-      return
+    if (!contractAddress) {
+      throw new Error('Falta VITE_CONTRACT_ADDRESS con el contrato simplificado desplegado.')
     }
 
-    if (age === null || age < 0) {
-      setEligibilityError('Elegí una fecha de nacimiento válida.')
-      return
-    }
+    // ponytail: private state already initialized by useLeaseProviders
+    return contracts.findDeployedContract(providers, {
+      contractAddress: contractAddress as ContractAddress,
+      compiledContract: leaseCompiledContract,
+      privateStateId: LEASE_PRIVATE_STATE_ID,
+      initialPrivateState: createPrivateState(shieldedAddresses.shieldedCoinPublicKey),
+    })
+  }
 
-    if (age < 18) {
-      setEligibilityError('La demo local requiere ser mayor de 18 años.')
-      return
-    }
+  async function runTx(statusMessage: string, action: (deployedContract: DeployedLeaseContract) => Promise<ActionTxResult>) {
+    if (isSubmitting) return null
 
-    const generationId = ++eligibilityGenerationRef.current
-
-    setEligibilityError(null)
-    setIsGeneratingProof(true)
+    setIsSubmitting(true)
+    setActionError(null)
+    setActionStatus(statusMessage)
 
     try {
-      await delay(1200)
+      const deployedContract = await getDeployedContract()
+      const txData = await action(deployedContract)
+      setTxRef(txData.public?.txHash ?? txData.public?.txId ?? null)
+      setTxBlock(txData.public?.blockHeight ?? null)
+      return txData
+    } catch (submitError) {
+      console.error('Lease registry action failed', submitError)
+      setActionStatus(null)
+      setActionError(submitError instanceof Error ? submitError.message : String(submitError))
+      return null
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
-      if (eligibilityGenerationRef.current !== generationId) {
-        return
-      }
-
-      setEligibilityProof({
-        proofId: createLocalProofId(),
-        generatedAt: new Date().toLocaleString('es-AR'),
-        age,
+  async function handlePrepareContract() {
+    try {
+      resetMessages()
+      const artifacts = await buildRentalContractArtifacts({
+        landlordName: form.landlordName,
+        landlordDocument: form.landlordDocument,
+        landlordWallet: walletAddress ?? '',
+        tenantName: form.tenantName,
+        tenantDocument: form.tenantDocument,
+        tenantWallet: form.tenantWallet,
+        propertyAddress: form.propertyAddress,
+        monthlyRent: form.monthlyRent,
+        currency: form.currency,
+        durationMonths: form.durationMonths,
+        deposit: form.deposit,
+        totalDue: form.totalDue,
+        createdAt: new Date().toISOString(),
       })
-    } finally {
-      if (eligibilityGenerationRef.current === generationId) {
-        setIsGeneratingProof(false)
-      }
+
+      setPreparedContract(artifacts)
+      setActionStatus('Contrato local preparado. Ya podés revisar, descargar y registrar sólo los hashes on-chain.')
+    } catch (prepareError) {
+      setActionError(prepareError instanceof Error ? prepareError.message : String(prepareError))
     }
   }
 
-  const handleOpenConfirm = () => {
-    if (!proofGenerated || leaseLedger?.tenantClaimed || !leaseProviders || !contractAddress) return
-    setConfirmOpen(true)
-  }
-
-  const handleConfirmSignature = async () => {
-    if (
-      !proofGenerated ||
-      isSigning ||
-      leaseLedger?.tenantClaimed ||
-      !leaseProviders ||
-      !contractAddress ||
-      !shieldedAddresses?.shieldedCoinPublicKey
-    ) {
+  async function handleDownloadPreview() {
+    if (!preparedContract) {
+      setActionError('Primero prepará el contrato local para generar la vista descargable.')
       return
     }
 
-    setIsSigning(true)
-    try {
-      const deployedContract = await contracts.findDeployedContract(
-        leaseProviders,
-        {
-          contractAddress: contractAddress as ContractAddress,
-          compiledContract: leaseCompiledContract,
-          privateStateId: LEASE_PRIVATE_STATE_ID,
-          initialPrivateState: createPrivateState(fromHex(shieldedAddresses.shieldedCoinPublicKey)),
-        },
-      )
+    downloadTextFile('midnight-lease-preview.html', buildContractPreviewHtml(preparedContract), 'text/html;charset=utf-8')
+    setActionStatus('Se descargó una copia HTML local del contrato.')
+  }
 
-      const txData = await deployedContract.callTx.claimLease()
-      const finalizedTx = txData as LeaseTxResult
-      setLeaseTxHash(finalizedTx.public?.txHash ?? finalizedTx.public?.txId ?? null)
-      setLeaseBlockHeight(finalizedTx.public?.blockHeight ?? null)
-      setSignedAt(new Date().toLocaleDateString('es-AR'))
-      setConfirmOpen(false)
-    } catch (error) {
-      console.error('Failed to sign lease on-chain', error)
-    } finally {
-      setIsSigning(false)
+  async function handleRegisterOnChain() {
+    if (!preparedContract) {
+      setActionError('Primero prepará el contrato local para obtener los hashes del registro.')
+      return
+    }
+
+    const txData = await runTx('Registrando hashes mínimos del contrato en Midnight...', (deployedContract) =>
+      deployedContract.callTx.registerRentalContract(
+        hexToBytes32(preparedContract.contractIdHashHex),
+        hexToBytes32(preparedContract.contractHashHex),
+        hexToBytes32(preparedContract.landlordCommitmentHex),
+        hexToBytes32(preparedContract.tenantCommitmentHex),
+      ),
+    )
+
+    if (txData) {
+      setActionStatus(`Contrato registrado. On-chain quedaron ${formatShort(preparedContract.contractIdHashHex, 8)} y ${formatShort(preparedContract.contractHashHex, 8)}.`)
     }
   }
 
-  const signed = leaseLedger?.tenantClaimed ?? false
-  const contractHash = leaseLedger ? formatHex(leaseLedger.agreementHash) : 'Pendiente'
-  const monthlyRent = formatLeaseMoney(leaseLedger?.monthlyRent ?? null, 'Monto pendiente')
-  const depositAmount = formatLeaseMoney(leaseLedger?.depositAmount ?? null, 'Monto pendiente')
-  const termMonths = leaseLedger ? `${leaseLedger.termMonths.toString()} meses` : 'Plazo pendiente'
-  const leaseStateLabel = leaseLedger ? leaseStateLabels[leaseLedger.state] : 'Pendiente de firma'
+  async function handleSign(role: 'landlord' | 'tenant') {
+    if (!preparedContract) {
+      setActionError('Primero registrá o al menos prepará el contrato local.')
+      return
+    }
 
-  const handleDownloadCopy = () => {
-    downloadJson('midnight-lease-copia-verificable.json', {
-      title: 'Midnight Lease - Contrato Privado',
-      status: signed ? 'signed' : proofGenerated ? 'proof-ready' : 'draft',
-      contractHash,
-      smartContract: contractAddress || 'pending-contract-address',
-      wallet: walletAddress ?? 'Pendiente',
-      proofId: eligibilityProof?.proofId ?? null,
-      eligibilityAge: eligibilityProof?.age ?? null,
-      verificationMode: eligibilityProof ? 'local-demo' : 'pending',
-      transactionId: leaseTxHash,
-      blockHeight: leaseBlockHeight,
+    const signatureDataUrl = role === 'landlord' ? form.landlordSignatureDataUrl : form.tenantSignatureDataUrl
+    if (!signatureDataUrl) {
+      setActionError(`Necesitamos la firma manuscrita de ${role === 'landlord' ? 'la parte propietaria' : 'la parte inquilina'}.`)
+      return
+    }
+
+    const signatureArtifacts = await buildLeaseSignatureArtifacts({
+      contractIdHash: preparedContract.contractIdHashHex,
+      signerRole: role,
+      signerName: role === 'landlord' ? form.landlordName : form.tenantName,
+      signerDocument: role === 'landlord' ? form.landlordDocument : form.tenantDocument,
+      signerWallet: role === 'landlord' ? (walletAddress ?? '') : form.tenantWallet,
+      signatureDataUrl,
+      signedAt: new Date().toISOString(),
     })
+
+    const signerCommitmentHex = role === 'landlord' ? preparedContract.landlordCommitmentHex : preparedContract.tenantCommitmentHex
+    const txData = await runTx(`Registrando firma ${role === 'landlord' ? 'del propietario' : 'del inquilino'}...`, (deployedContract) =>
+      deployedContract.callTx.markContractSigned(
+        hexToBytes32(preparedContract.contractIdHashHex),
+        hexToBytes32(signerCommitmentHex),
+        hexToBytes32(signatureArtifacts.payloadHashHex),
+      ),
+    )
+
+    if (txData) {
+      if (role === 'landlord') {
+        setLandlordSignatureArtifacts(signatureArtifacts)
+      } else {
+        setTenantSignatureArtifacts(signatureArtifacts)
+      }
+      setActionStatus(`Firma ${role === 'landlord' ? 'del propietario' : 'del inquilino'} registrada. Sólo viajó el hash ${formatShort(signatureArtifacts.payloadHashHex, 8)}.`)
+    }
   }
 
-  const handleDownloadReceipt = () => {
-    downloadJson('midnight-lease-comprobante.json', {
-      signature: 'Verificada',
-      contractHash,
-      proofId: eligibilityProof?.proofId ?? null,
-      eligibilityAge: eligibilityProof?.age ?? null,
-      verificationMode: eligibilityProof ? 'local-demo' : 'pending',
-      transactionId: leaseTxHash,
-      blockHeight: leaseBlockHeight,
-      signedAt: signedAt ?? 'Pendiente',
-    })
-  }
+  async function handlePayRent() {
+    if (!preparedContract) {
+      setActionError('Primero prepará el contrato local.')
+      return
+    }
 
-  const handleViewContract = () => {
-    contractSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const parsedAmount = Number.parseFloat(nightAmount)
+    if (!Number.isFinite(parsedAmount) || pFrsedAmount <= 0) {
+      setActionError('Ingresá un monto válido de NIGHT a transferir.')
+      return
+    }
+
+    // ponytail: 1 NIGHT = 1_000_000 Stars. parseFloat + round is fine for demo amounts.
+    const amountStars = BigInt(Math.round(parsedAmount * 1_000_000))
+
+    if (!LANDLORD_ADDRESS) {
+      setActionError('LANDLORD_ADDRESS no está configurado. Hardcodealo en n  ts antes de continuar.')
+      return
+    }
+
+    if (!connectedAPI) {
+      setActionError('Conectá una wallet compatible antes de enviar transacciones.')
+      return
+    }
+
+    setIsSubmitting(true)
+    setActionError(null)
+    setActionStatus(`Enviando ${nightAmount} NIGHT a la wallet del landlord vía Zswap...`)
+
+    try {
+      const { txProofHex, txId } = await sendNightViaZswap(connectedAPI, amountStars, LANDLORD_ADDRESS)
+      setZswapTxId(txId)
+
+      setActionStatus('NIGHT enviado. Registrando comprobante on-chain...')
+
+      const deployedContract = await getDeployedContract()
+      const paidTx = await deployedContract.callTx.markContractPaid(
+        hexToBytes32(preparedContract.contractIdHashHex),
+        hexToBytes32(txProofHex),
+      )
+      setTxRef(paidTx.public?.txHash ?? paidTx.public?.txId ?? null)
+      setTxBlock(paidTx.public?.blockHeight ?? null)
+
+      setActionStatus('Pago registrado. Activando contrato...')
+
+      const activatedTx = await deployedContract.callTx.activateContract(
+        hexToBytes32(preparedContract.contractIdHashHex),
+      )
+      setTxRef(activatedTx.public?.txHash ?? activatedTx.public?.txId ?? null)
+      setTxBlock(activatedTx.public?.blockHeight ?? null)
+      setActionStatus(`¡Contrato activado! ${nightAmount} NIGHT enviados vía Zswap.`)
+    } catch (payError) {
+      console.error('Payment failed', payError)
+      setActionError(payError instanceof Error ? payError.message : String(payError))
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
-    <div id="top" className="min-h-screen bg-white text-black scroll-smooth">
-      <AppHeader
-        walletConnected={walletConnected}
-        walletConnecting={connectingWallet}
-        walletAddress={walletAddress}
-        onConnectWallet={handleConnectWallet}
-      />
+    <>
+    <main className="mx-auto grid max-w-[1180px] gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="space-y-6">
+          <Card className="rounded-[30px] border-neutral-200 bg-white shadow-none">
+            <CardContent className="space-y-6 p-8 sm:p-10">
+              <div className="max-w-3xl space-y-4">
+                <p className="text-xs font-medium uppercase tracking-[0.24em] text-black/55">Minimal rental registry</p>
+                <h1 className="text-3xl font-semibold tracking-tight text-black sm:text-5xl">
+                  Contrato local, hashes on-chain, cero backend.
+                </h1>
+                <p className="text-base leading-7 text-black/70 sm:text-lg">
+                  Esta versión deja TODO el contenido sensible en el navegador o en una copia descargable. Midnight sólo registra <code>contractIdHash</code>, <code>contractHash</code>, commitments, hashes de firma, pago y estado.
+                </p>
+              </div>
 
-      <main className="mx-auto grid max-w-[1280px] gap-6 px-4 py-8 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="space-y-6">
-          <LeaseHero onConnectWallet={handleConnectWallet} onReviewContract={handleViewContract} />
+              <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm leading-6 text-black/70">
+                Flujo demo: preparás el contrato local, lo revisás, registrás el hash, dibujás ambas firmas y confirmás el pago — la activación es automática. Nada de PDFs, Supabase ni persistencia adicional.
+              </div>
+            </CardContent>
+          </Card>
 
-          <LeaseStepper walletConnected={walletConnected} proofGenerated={proofGenerated} signed={signed} />
-
-          <div ref={contractSectionRef}>
-            <ContractStatusCard
-              signed={signed}
-              contractHash={contractHash}
-              monthlyRent={monthlyRent}
-              depositAmount={depositAmount}
-              termMonths={termMonths}
-              leaseStateLabel={leaseStateLabel}
-            />
+          <div className="grid gap-4 md:grid-cols-4">
+            <FlowStep done={Boolean(preparedContract)} active={!preparedContract} title="1. Datos" detail="Completá los datos mínimos del alquiler y prepará el borrador local." />
+            <FlowStep done={registered} active={Boolean(preparedContract) && !registered} title="2. Registro" detail="Subí sólo los hashes y commitments mínimos a Midnight." />
+            <FlowStep done={fullySigned} active={registered && !fullySigned} title="3. Firmas" detail="Cada firma manuscrita se hashea localmente antes de la tx." />
+            <FlowStep done={active} active={paid && !active} title="4. Pago + Active" detail="Registrá el pago hash y activá el contrato." />
           </div>
 
-          <PrivacyPanel
-            walletAddress={walletAddress}
-            monthlyRent={monthlyRent}
-            contractHash={contractHash}
-            proofGenerated={proofGenerated || signed}
-          />
+          <Card className="rounded-[24px] border-neutral-200 bg-white shadow-none">
+            <CardHeader>
+              <CardTitle>Datos mínimos del contrato</CardTitle>
+              <CardDescription>Legaltech blanco/negro, sin workflow corporativo largo: cargás lo esencial y el resto queda local.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Landlord name</span>
+                  <input type="text" value={form.landlordName} onChange={(event) => updateField('landlordName', event.currentTarget.value)} placeholder="Ada Lovelace" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Landlord document</span>
+                  <input type="text" value={form.landlordDocument} onChange={(event) => updateField('landlordDocument', event.currentTarget.value)} placeholder="20123456" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Tenant name</span>
+                  <input type="text" value={form.tenantName} onChange={(event) => updateField('tenantName', event.currentTarget.value)} placeholder="Grace Hopper" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Tenant document</span>
+                  <input type="text" value={form.tenantDocument} onChange={(event) => updateField('tenantDocument', event.currentTarget.value)} placeholder="30987654" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Tenant wallet</span>
+                  <input type="text" value={form.tenantWallet} onChange={(event) => updateField('tenantWallet', event.currentTarget.value)} placeholder="mn_addr_preprod1..." className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Property address</span>
+                  <input type="text" value={form.propertyAddress} onChange={(event) => updateField('propertyAddress', event.currentTarget.value)} placeholder="742 Evergreen Terrace" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Monthly rent</span>
+                  <input type="text" value={form.monthlyRent} onChange={(event) => updateField('monthlyRent', event.currentTarget.value)} placeholder="1200" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Currency</span>
+                  <input type="text" value={form.currency} onChange={(event) => updateField('currency', event.currentTarget.value)} placeholder="USD" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm uppercase text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Duration months</span>
+                  <input type="text" value={form.durationMonths} onChange={(event) => updateField('durationMonths', event.currentTarget.value)} placeholder="12" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Deposit</span>
+                  <input type="text" value={form.deposit} onChange={(event) => updateField('deposit', event.currentTarget.value)} placeholder="1200" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Total due</span>
+                  <input type="text" value={form.totalDue} onChange={(event) => updateField('totalDue', event.currentTarget.value)} placeholder="2400" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+              </div>
 
-          <ProofGenerationCard
-            walletConnected={walletConnected}
-            proofGenerated={proofGenerated}
-            isGeneratingProof={isGeneratingProof}
-            signed={signed}
-            eligibilityForm={eligibilityForm}
-            eligibilityProof={eligibilityProof}
-            eligibilityError={eligibilityError}
-            onEligibilityFieldChange={handleEligibilityFieldChange}
-            onGenerateProof={handleGenerateProof}
-          />
+              <div className="flex flex-wrap items-center gap-3">
+                <Button type="button" onClick={handlePrepareContract} disabled={isSubmitting} className="bg-black text-white shadow-none hover:bg-black/90">
+                  <FileText className="h-4 w-4" />
+                  Preparar contrato local
+                </Button>
+                <Button type="button" variant="outline" onClick={handleDownloadPreview} disabled={!preparedContract || isSubmitting} className="border-neutral-300 bg-white text-black shadow-none hover:bg-black hover:text-white">
+                  <Download className="h-4 w-4" />
+                  Descargar HTML local
+                </Button>
+                <Button type="button" variant="outline" onClick={handleRegisterOnChain} disabled={!preparedContract || isSubmitting} className="border-neutral-300 bg-white text-black shadow-none hover:bg-black hover:text-white">
+                  {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                  Registrar hashes on-chain
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
-          <SignatureCard
-            walletAddress={walletAddress}
-            contractAddress={contractAddress || null}
-            contractHash={contractHash}
-            proofGenerated={proofGenerated}
-            signed={signed}
-            signedAt={signedAt}
-            signingReady={Boolean(leaseProviders && contractAddress && shieldedAddresses?.shieldedCoinPublicKey)}
-            leaseTxHash={leaseTxHash}
-            onOpenConfirm={handleOpenConfirm}
-            onDownloadCopy={handleDownloadCopy}
-          />
+          <Card className="rounded-[24px] border-neutral-200 bg-white shadow-none">
+            <CardHeader>
+              <CardTitle>Firmas manuscritas</CardTitle>
+              <CardDescription>Las imágenes quedan locales; cada tx envía únicamente el hash final del payload firmado.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-6 lg:grid-cols-2">
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Landlord signature</p>
+                  <p className="mt-2 text-sm text-black/55">La firma se hashea localmente junto con nombre, documento, wallet y contractIdHash.</p>
+                </div>
+                <SignaturePad value={form.landlordSignatureDataUrl} onChange={(value) => updateField('landlordSignatureDataUrl', value)} disabled={isSubmitting} />
+                <Button type="button" variant="outline" onClick={() => void handleSign('landlord')} disabled={!preparedContract || isSubmitting} className="border-neutral-300 bg-white text-black shadow-none hover:bg-black hover:text-white">
+                  <PenTool className="h-4 w-4" />
+                  Firmar como propietario
+                </Button>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Tenant signature</p>
+                  <p className="mt-2 text-sm text-black/55">Mismo criterio: sólo sube el hash final, no la imagen ni los datos personales.</p>
+                </div>
+                <SignaturePad value={form.tenantSignatureDataUrl} onChange={(value) => updateField('tenantSignatureDataUrl', value)} disabled={isSubmitting} />
+                <Button type="button" variant="outline" onClick={() => void handleSign('tenant')} disabled={!preparedContract || isSubmitting} className="border-neutral-300 bg-white text-black shadow-none hover:bg-black hover:text-white">
+                  <PenTool className="h-4 w-4" />
+                  Firmar como inquilino
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
-          {signed ? (
-            <SuccessState
-              onViewContract={handleViewContract}
-              onDownloadReceipt={handleDownloadReceipt}
-              signedAt={signedAt}
-              transactionId={leaseTxHash}
-              contractHash={contractHash}
-              blockHeight={leaseBlockHeight}
-            />
+          <Card className="rounded-[24px] border-neutral-200 bg-white shadow-none">
+            <CardHeader>
+              <CardTitle>Pago con NIGHT</CardTitle>
+              <CardDescription>El pago se hace con NIGHT real vía Zswap (shielded). El txId de la transferencia queda registrado on-chain como comprobante.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <label className="block">
+                <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Monto en NIGHT</span>
+                <input
+                  type="text"
+                  value={nightAmount}
+                  onChange={(e) => setNightAmount(e.currentTarget.value)}
+                  placeholder="10"
+                  className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10"
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button type="button" onClick={handlePayRent} disabled={!preparedContract || isSubmitting} className="bg-black text-white shadow-none hover:bg-black/90 disabled:bg-black/40">
+                  {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Receipt className="h-4 w-4" />}
+                  {isSubmitting ? 'Procesando...' : 'Pagar y activar'}
+                </Button>
+              </div>
+
+              {zswapTxId ? (
+                <div className="rounded-2xl border border-black/10 bg-neutral-50 p-4 text-sm">
+                  <p className="text-xs uppercase tracking-[0.14em] text-black/45">Zswap Transfer Tx ID</p>
+                  <p className="mt-1 break-all font-medium text-black">{formatShort(zswapTxId, 16)}</p>
+                </div>
+              ) : null}
+
+              {actionError ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{actionError}</div> : null}
+              {actionStatus ? <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-black/70">{actionStatus}</div> : null}
+            </CardContent>
+          </Card>
+
+          {preparedContract ? (
+            <Card className="rounded-[24px] border-neutral-200 bg-white shadow-none">
+              <CardHeader>
+                <CardTitle>Preview local</CardTitle>
+                <CardDescription>Todo esto vive en el navegador o en la copia descargada; no entra crudo a la chain.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] text-black/45">Contract ID hash</p>
+                    <p className="mt-1 break-all font-medium text-black">{preparedContract.contractIdHashHex}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] text-black/45">Contract hash</p>
+                    <p className="mt-1 break-all font-medium text-black">{preparedContract.contractHashHex}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] text-black/45">Landlord commitment</p>
+                    <p className="mt-1 break-all font-medium text-black">{preparedContract.landlordCommitmentHex}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.14em] text-black/45">Tenant commitment</p>
+                    <p className="mt-1 break-all font-medium text-black">{preparedContract.tenantCommitmentHex}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-5 text-sm leading-7 text-black/75">
+                  <p><strong>Property:</strong> {preparedContract.payload.propertyAddress}</p>
+                  <p><strong>Landlord:</strong> {preparedContract.payload.landlordName} ({preparedContract.payload.landlordDocument})</p>
+                  <p><strong>Tenant:</strong> {preparedContract.payload.tenantName} ({preparedContract.payload.tenantDocument})</p>
+                  <p><strong>Economics:</strong> {preparedContract.payload.monthlyRent} {preparedContract.payload.currency}/month, deposit {preparedContract.payload.deposit}, total due {preparedContract.payload.totalDue}, duration {preparedContract.payload.durationMonths} months.</p>
+                </div>
+
+                {(landlordSignatureArtifacts || tenantSignatureArtifacts || zswapTxId) ? (
+                  <div className="grid gap-4 md:grid-cols-3">
+                    {landlordSignatureArtifacts ? (
+                      <div className="rounded-2xl border border-neutral-200 p-4 text-sm">
+                        <p className="text-xs uppercase tracking-[0.14em] text-black/45">Landlord signature hash</p>
+                        <p className="mt-2 break-all font-medium text-black">{landlordSignatureArtifacts.payloadHashHex}</p>
+                      </div>
+                    ) : null}
+                    {tenantSignatureArtifacts ? (
+                      <div className="rounded-2xl border border-neutral-200 p-4 text-sm">
+                        <p className="text-xs uppercase tracking-[0.14em] text-black/45">Tenant signature hash</p>
+                        <p className="mt-2 break-all font-medium text-black">{tenantSignatureArtifacts.payloadHashHex}</p>
+                      </div>
+                    ) : null}
+                    {zswapTxId ? (
+                      <div className="rounded-2xl border border-neutral-200 p-4 text-sm">
+                        <p className="text-xs uppercase tracking-[0.14em] text-black/45">Zswap payment proof</p>
+                        <p className="mt-2 break-all font-medium text-black">{formatShort(zswapTxId, 16)}</p>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
           ) : null}
-        </div>
+        </section>
 
-        <ActivitySidebar walletConnected={walletConnected} proofGenerated={proofGenerated} signed={signed} />
+        <aside className="space-y-6 lg:sticky lg:top-24 lg:self-start">
+          <Card className="rounded-[24px] border-neutral-200 bg-white shadow-none">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><Network className="h-5 w-5" /> Estado on-chain</CardTitle>
+              <CardDescription>Registro mínimo público del contrato.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {[
+                ['Contrato', contractAddress ? formatShort(contractAddress, 8) : 'Falta VITE_CONTRACT_ADDRESS'],
+                ['Status', formatRentalStatus(leaseLedger?.status)],
+                ['Contract ID hash', formatBytes(leaseLedger?.contractIdHash)],
+                ['Contract hash', formatBytes(leaseLedger?.contractHash)],
+                ['Landlord commitment', formatBytes(leaseLedger?.landlordCommitment)],
+                ['Tenant commitment', formatBytes(leaseLedger?.tenantCommitment)],
+                ['Landlord signature hash', formatBytes(leaseLedger?.landlordSignatureHash)],
+                ['Tenant signature hash', formatBytes(leaseLedger?.tenantSignatureHash)],
+                ['Payment hash', formatBytes(leaseLedger?.paymentHash)],
+                ['Wallet conectada', walletAddress ? formatShort(walletAddress, 8) : 'No conectada'],
+                ['Tx reciente', formatShort(txRef, 8)],
+                ['Bloque', txBlock?.toString() ?? 'Pendiente'],
+              ].map(([label, value]) => (
+                <div key={label} className="border-b border-neutral-200 pb-3 last:border-b-0 last:pb-0">
+                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">{label}</p>
+                  <p className="mt-1 break-all text-sm font-medium text-black">{value}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </aside>
       </main>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -1563,29 +701,15 @@ export function LeasePage() {
           <DialogHeader className="space-y-2 text-left">
             <DialogTitle className="text-xl font-semibold text-black">Conectar wallet</DialogTitle>
             <DialogDescription className="max-w-2xl text-sm leading-6 text-black/65">
-              Elegí una wallet compatible para conectar con Midnight Preprod. El flujo actual usa el widget existente del proyecto.
+              Elegí una wallet compatible para conectar con Midnight Preprod.
             </DialogDescription>
           </DialogHeader>
-
           <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4">
             <ScreenMain setOpen={setOpen} selectedNetwork={networkID.PREPROD} />
           </div>
-
-          {error ? (
-            <p className="text-sm text-black/60">No se pudo conectar la wallet. Probá de nuevo o revisá la extensión instalada.</p>
-          ) : null}
+          {error ? <p className="text-sm text-black/60">No se pudo conectar la wallet. Probá de nuevo o revisá la extensión instalada.</p> : null}
         </DialogContent>
       </Dialog>
-
-      <ConfirmSignatureModal
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        onConfirm={handleConfirmSignature}
-        signing={isSigning}
-        contractHash={contractHash}
-        monthlyRent={monthlyRent}
-        walletAddress={walletAddress}
-      />
-    </div>
+    </>
   )
 }

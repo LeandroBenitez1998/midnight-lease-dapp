@@ -1,72 +1,132 @@
 import { describe, expect, it } from "vitest";
+import { Lease } from "../index.js";
 import { LeaseSimulator } from "./simulators/simulator.js";
-import { bytesFromLabel } from "./utils/utils.js";
-import { LeaseState } from "../../managed/lease/contract/index.js";
+import { createFilledBytes } from "./utils/bytes.js";
 
 function createSimulator() {
-  const simulator = new LeaseSimulator(
-    bytesFromLabel("lease-001"),
-    bytesFromLabel("property-palermo"),
-    bytesFromLabel("agreement-001"),
-    850n,
-    1200n,
-    2n,
-  );
-  simulator.createParticipant("tenant", "tenant");
-  return simulator;
+  return new LeaseSimulator();
 }
 
-describe("Lease smart contract", () => {
-  it("starts offered with immutable public terms", () => {
+describe("Lease registry contract", () => {
+  it("starts empty before any rental contract is registered", () => {
     const simulator = createSimulator();
     const ledger = simulator.getLedger();
 
-    expect(ledger.state).toBe(LeaseState.OFFERED);
-    expect(ledger.monthlyRent).toBe(850n);
-    expect(ledger.depositAmount).toBe(1200n);
-    expect(ledger.termMonths).toBe(2n);
-    expect(ledger.tenantClaimed).toBe(false);
-    expect(ledger.depositConfirmed).toBe(false);
-    expect(ledger.paymentsMade).toBe(0n);
-    expect(Buffer.from(ledger.leaseId).toString("hex")).toContain("6c656173652d303031");
+    expect(ledger.contractIdHash).toBeDefined();
+    expect(ledger.contractHash).toBeDefined();
+    expect(ledger.landlordCommitment).toBeDefined();
+    expect(ledger.tenantCommitment).toBeDefined();
+    expect(ledger.status).toBe(Lease.RentalStatus.EMPTY);
   });
 
-  it("moves through claim, activation, payment, completion, and deposit release", () => {
+  it("registers the minimal rental contract hashes and commitments", () => {
     const simulator = createSimulator();
+    const contractIdHash = createFilledBytes(32, 7);
+    const contractHash = createFilledBytes(32, 11);
+    const landlordCommitment = createFilledBytes(32, 13);
+    const tenantCommitment = createFilledBytes(32, 17);
 
-    const claimed = simulator.as("tenant").claimLease();
-    expect(claimed.state).toBe(LeaseState.CLAIMED);
-    expect(claimed.tenantClaimed).toBe(true);
+    const ledger = simulator.registerRentalContract(
+      contractIdHash,
+      contractHash,
+      landlordCommitment,
+      tenantCommitment,
+    );
 
-    const depositConfirmed = simulator.as("landlord").confirmDeposit("deposit-receipt-001");
-    expect(depositConfirmed.depositConfirmed).toBe(true);
-    expect(depositConfirmed.hasDepositReceiptHash).toBe(true);
-
-    const active = simulator.as("landlord").activateLease();
-    expect(active.state).toBe(LeaseState.ACTIVE);
-
-    const firstPayment = simulator.as("tenant").recordPayment("payment-001");
-    expect(firstPayment.paymentsMade).toBe(1n);
-    expect(firstPayment.state).toBe(LeaseState.ACTIVE);
-
-    const completed = simulator.as("tenant").recordPayment("payment-002");
-    expect(completed.paymentsMade).toBe(2n);
-    expect(completed.state).toBe(LeaseState.COMPLETED);
-
-    const released = simulator.as("landlord").releaseDeposit();
-    expect(released.depositReleased).toBe(true);
-    expect(released.state).toBe(LeaseState.COMPLETED);
+    expect(ledger.contractIdHash).toEqual(contractIdHash);
+    expect(ledger.contractHash).toEqual(contractHash);
+    expect(ledger.landlordCommitment).toEqual(landlordCommitment);
+    expect(ledger.tenantCommitment).toEqual(tenantCommitment);
+    expect(ledger.status).toBe(Lease.RentalStatus.REGISTERED);
   });
 
-  it("allows the tenant or landlord to terminate after activation", () => {
+  it("rejects registering a second contract over the same registry slot", () => {
     const simulator = createSimulator();
+    simulator.registerRentalContract(
+      createFilledBytes(32, 1),
+      createFilledBytes(32, 2),
+      createFilledBytes(32, 3),
+      createFilledBytes(32, 4),
+    );
 
-    simulator.as("tenant").claimLease();
-    simulator.as("landlord").confirmDeposit("deposit-receipt-002");
-    simulator.as("landlord").activateLease();
+    expect(() =>
+      simulator.registerRentalContract(
+        createFilledBytes(32, 5),
+        createFilledBytes(32, 6),
+        createFilledBytes(32, 7),
+        createFilledBytes(32, 8),
+      ),
+    ).toThrow(/registry already initialized/i);
+  });
 
-    const terminated = simulator.as("tenant").terminateByTenant("tenant-quit");
-    expect(terminated.state).toBe(LeaseState.TERMINATED);
-    expect(terminated.hasTerminationReasonHash).toBe(true);
+  it("tracks partial and complete signature progress by signer commitment", () => {
+    const simulator = createSimulator();
+    const contractIdHash = createFilledBytes(32, 21);
+    const landlordCommitment = createFilledBytes(32, 22);
+    const tenantCommitment = createFilledBytes(32, 23);
+
+    simulator.registerRentalContract(
+      contractIdHash,
+      createFilledBytes(32, 24),
+      landlordCommitment,
+      tenantCommitment,
+    );
+
+    const firstLedger = simulator.markContractSigned(
+      contractIdHash,
+      landlordCommitment,
+      createFilledBytes(32, 25),
+    );
+    const finalLedger = simulator.markContractSigned(
+      contractIdHash,
+      tenantCommitment,
+      createFilledBytes(32, 26),
+    );
+
+    expect(firstLedger.status).toBe(Lease.RentalStatus.PARTIALLY_SIGNED);
+    expect(finalLedger.status).toBe(Lease.RentalStatus.SIGNED);
+  });
+
+  it("rejects signatures from commitments that are not part of the contract", () => {
+    const simulator = createSimulator();
+    const contractIdHash = createFilledBytes(32, 31);
+
+    simulator.registerRentalContract(
+      contractIdHash,
+      createFilledBytes(32, 32),
+      createFilledBytes(32, 33),
+      createFilledBytes(32, 34),
+    );
+
+    expect(() =>
+      simulator.markContractSigned(
+        contractIdHash,
+        createFilledBytes(32, 35),
+        createFilledBytes(32, 36),
+      ),
+    ).toThrow(/unknown signer commitment/i);
+  });
+
+  it("stores the payment hash after both signatures and then allows activation", () => {
+    const simulator = createSimulator();
+    const contractIdHash = createFilledBytes(32, 41);
+    const landlordCommitment = createFilledBytes(32, 42);
+    const tenantCommitment = createFilledBytes(32, 43);
+
+    simulator.registerRentalContract(
+      contractIdHash,
+      createFilledBytes(32, 44),
+      landlordCommitment,
+      tenantCommitment,
+    );
+    simulator.markContractSigned(contractIdHash, landlordCommitment, createFilledBytes(32, 45));
+    simulator.markContractSigned(contractIdHash, tenantCommitment, createFilledBytes(32, 46));
+
+    const paidLedger = simulator.markContractPaid(contractIdHash, createFilledBytes(32, 47));
+    const activeLedger = simulator.activateContract(contractIdHash);
+
+    expect(paidLedger.paymentHash).toEqual(createFilledBytes(32, 47));
+    expect(paidLedger.status).toBe(Lease.RentalStatus.PAID);
+    expect(activeLedger.status).toBe(Lease.RentalStatus.ACTIVE);
   });
 });
