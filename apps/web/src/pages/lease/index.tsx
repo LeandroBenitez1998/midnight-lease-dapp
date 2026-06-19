@@ -12,6 +12,7 @@ import {
   type LeaseSignatureArtifacts,
   type RentalContractArtifacts,
 } from '@/features/lease-signature/signature-payload'
+import { ContractIntegrityCard } from '@/features/lease-signature/contract-integrity-card'
 import { CompiledContract } from '@midnight-ntwrk/compact-js'
 import { fromHex, type ContractAddress } from '@midnight-ntwrk/compact-runtime'
 import { contracts } from '@midnight-ntwrk/midnight-js'
@@ -22,7 +23,7 @@ import { type DeployedLeaseContract } from '@/modules/midnight/lease-sdk/api/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/modules/midnight/wallet-widget/ui/common/dialog'
 import { networkID } from '@/modules/midnight/wallet-widget/ui/common/common-values'
 import ScreenMain from '@/modules/midnight/wallet-widget/ui/screen-main'
-import { sendNightViaZswap, LANDLORD_ADDRESS } from '@/modules/midnight/lease-sdk/api/nightTransfer'
+import { sendNightViaZswap } from '@/modules/midnight/lease-sdk/api/nightTransfer'
 
 const LEASE_PRIVATE_STATE_ID = 'leasePrivateState' as const
 
@@ -388,7 +389,7 @@ export function LeasePage() {
     }
 
     const parsedAmount = Number.parseFloat(nightAmount)
-    if (!Number.isFinite(parsedAmount) || pFrsedAmount <= 0) {
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setActionError('Ingresá un monto válido de NIGHT a transferir.')
       return
     }
@@ -396,8 +397,8 @@ export function LeasePage() {
     // ponytail: 1 NIGHT = 1_000_000 Stars. parseFloat + round is fine for demo amounts.
     const amountStars = BigInt(Math.round(parsedAmount * 1_000_000))
 
-    if (!LANDLORD_ADDRESS) {
-      setActionError('LANDLORD_ADDRESS no está configurado. Hardcodealo en n  ts antes de continuar.')
+    if (!walletAddress) {
+      setActionError('Conectá una wallet para obtener la dirección del landlord.')
       return
     }
 
@@ -411,7 +412,7 @@ export function LeasePage() {
     setActionStatus(`Enviando ${nightAmount} NIGHT a la wallet del landlord vía Zswap...`)
 
     try {
-      const { txProofHex, txId } = await sendNightViaZswap(connectedAPI, amountStars, LANDLORD_ADDRESS)
+      const { txProofHex, txId } = await sendNightViaZswap(connectedAPI, amountStars, walletAddress)
       setZswapTxId(txId)
 
       setActionStatus('NIGHT enviado. Registrando comprobante on-chain...')
@@ -604,6 +605,13 @@ export function LeasePage() {
               {actionStatus ? <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-black/70">{actionStatus}</div> : null}
             </CardContent>
           </Card>
+
+          <ContractIntegrityCard
+            leaseLedger={leaseLedger}
+            preparedContract={preparedContract}
+            landlordSignatureArtifacts={landlordSignatureArtifacts}
+            tenantSignatureArtifacts={tenantSignatureArtifacts}
+          />
 
           {preparedContract ? (
             <Card className="rounded-[24px] border-neutral-200 bg-white shadow-none">
