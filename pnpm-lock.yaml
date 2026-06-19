@@ -17,49 +17,49 @@ importers:
         specifier: workspace:*
         version: link:../../contracts/lease
       '@midnight-ntwrk/compact-js':
-        specifier: ^2.5.1
+        specifier: 2.5.1
         version: 2.5.1
       '@midnight-ntwrk/compact-runtime':
-        specifier: ^0.16.0
+        specifier: 0.16.0
         version: 0.16.0
       '@midnight-ntwrk/dapp-connector-api':
-        specifier: ^4.0.1
+        specifier: 4.0.1
         version: 4.0.1
       '@midnight-ntwrk/ledger-v8':
-        specifier: ^8.1.0
+        specifier: 8.1.0
         version: 8.1.0
       '@midnight-ntwrk/midnight-js':
-        specifier: ^4.1.1
+        specifier: 4.1.1
         version: 4.1.1
       '@midnight-ntwrk/midnight-js-fetch-zk-config-provider':
-        specifier: ^4.1.1
+        specifier: 4.1.1
         version: 4.1.1
       '@midnight-ntwrk/midnight-js-http-client-proof-provider':
-        specifier: ^4.1.1
+        specifier: 4.1.1
         version: 4.1.1
       '@midnight-ntwrk/midnight-js-indexer-public-data-provider':
-        specifier: ^4.1.1
+        specifier: 4.1.1
         version: 4.1.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@midnight-ntwrk/midnight-js-network-id':
-        specifier: ^4.1.1
+        specifier: 4.1.1
         version: 4.1.1
       '@midnight-ntwrk/midnight-js-node-zk-config-provider':
-        specifier: ^4.1.1
+        specifier: 4.1.1
         version: 4.1.1
       '@midnight-ntwrk/wallet-sdk-dust-wallet':
-        specifier: ^3.0.0
+        specifier: 3.0.0
         version: 3.0.0(ws@8.21.0)
       '@midnight-ntwrk/wallet-sdk-facade':
-        specifier: ^3.0.0
+        specifier: 3.0.0
         version: 3.0.0(ws@8.21.0)
       '@midnight-ntwrk/wallet-sdk-hd':
-        specifier: ^3.0.1
+        specifier: 3.0.2
         version: 3.0.2
       '@midnight-ntwrk/wallet-sdk-shielded':
-        specifier: ^2.1.0
+        specifier: 2.1.0
         version: 2.1.0(ws@8.21.0)
       '@midnight-ntwrk/wallet-sdk-unshielded-wallet':
-        specifier: ^2.1.0
+        specifier: 2.1.0
         version: 2.1.0(ws@8.21.0)
       '@radix-ui/react-dialog':
         specifier: ^1.1.14
@@ -186,7 +186,7 @@ importers:
   contracts/lease:
     dependencies:
       '@midnight-ntwrk/compact-runtime':
-        specifier: ^0.16.0
+        specifier: 0.16.0
         version: 0.16.0
     devDependencies:
       typescript:
@@ -4291,11 +4291,11 @@ snapshots:
   '@midnight-ntwrk/wallet-sdk-capabilities@3.2.0(ws@8.21.0)':
     dependencies:
       '@midnight-ntwrk/ledger-v8': 8.1.0
-      '@midnight-ntwrk/wallet-sdk-abstractions': 2.0.0
-      '@midnight-ntwrk/wallet-sdk-indexer-client': 1.2.0(ws@8.21.0)
+      '@midnight-ntwrk/wallet-sdk-abstractions': 2.1.0
+      '@midnight-ntwrk/wallet-sdk-indexer-client': 1.2.2(ws@8.21.0)
       '@midnight-ntwrk/wallet-sdk-node-client': 1.1.2
       '@midnight-ntwrk/wallet-sdk-prover-client': 1.2.2
-      '@midnight-ntwrk/wallet-sdk-utilities': 1.1.0
+      '@midnight-ntwrk/wallet-sdk-utilities': 1.2.0
       '@midnight-ntwrk/zkir-v2': 2.1.0
       effect: 3.21.3
       rxjs: 7.8.2

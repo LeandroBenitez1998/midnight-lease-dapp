@@ -7,8 +7,8 @@ const managedLeaseDir = path.join(rootDir, 'contracts/lease/managed/lease')
 
 const networkDefaults = {
   undeployed: {
-    indexerHttp: 'http://localhost:8088/api/v4/graphql',
-    indexerWs: 'ws://localhost:8088/api/v4/graphql/ws',
+    indexerHttp: 'http://localhost:8088/api/v3/graphql',
+    indexerWs: 'ws://localhost:8088/api/v3/graphql/ws',
     rpc: 'ws://localhost:9944',
   },
   preprod: {
