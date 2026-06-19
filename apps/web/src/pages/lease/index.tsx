@@ -43,6 +43,7 @@ type ActionTxResult = {
 type RentalFormState = {
   landlordName: string
   landlordDocument: string
+  landlordWallet: string
   tenantName: string
   tenantDocument: string
   tenantWallet: string
@@ -59,6 +60,7 @@ type RentalFormState = {
 const initialFormState: RentalFormState = {
   landlordName: '',
   landlordDocument: '',
+  landlordWallet: '',
   tenantName: '',
   tenantDocument: '',
   tenantWallet: '',
@@ -291,7 +293,7 @@ export function LeasePage() {
       const artifacts = await buildRentalContractArtifacts({
         landlordName: form.landlordName,
         landlordDocument: form.landlordDocument,
-        landlordWallet: walletAddress ?? '',
+        landlordWallet: form.landlordWallet,
         tenantName: form.tenantName,
         tenantDocument: form.tenantDocument,
         tenantWallet: form.tenantWallet,
@@ -397,8 +399,8 @@ export function LeasePage() {
     // ponytail: 1 NIGHT = 1_000_000 Stars. parseFloat + round is fine for demo amounts.
     const amountStars = BigInt(Math.round(parsedAmount * 1_000_000))
 
-    if (!walletAddress) {
-      setActionError('Conectá una wallet para obtener la dirección del landlord.')
+    if (!preparedContract.payload.landlordWallet) {
+      setActionError('Ingresá la wallet del landlord (recipient) antes de pagar.')
       return
     }
 
@@ -412,7 +414,7 @@ export function LeasePage() {
     setActionStatus(`Enviando ${nightAmount} NIGHT a la wallet del landlord vía Zswap...`)
 
     try {
-      const { txProofHex, txId } = await sendNightViaZswap(connectedAPI, amountStars, walletAddress)
+      const { txProofHex, txId } = await sendNightViaZswap(connectedAPI, amountStars, preparedContract.payload.landlordWallet)
       setZswapTxId(txId)
 
       setActionStatus('NIGHT enviado. Registrando comprobante on-chain...')
@@ -484,6 +486,10 @@ export function LeasePage() {
                 <label className="block">
                   <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Landlord document</span>
                   <input type="text" value={form.landlordDocument} onChange={(event) => updateField('landlordDocument', event.currentTarget.value)} placeholder="20123456" className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
+                </label>
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Landlord wallet (recipient NIGHT)</span>
+                  <input type="text" value={form.landlordWallet} onChange={(event) => updateField('landlordWallet', event.currentTarget.value)} placeholder="mn_addr_preprod1..." className="mt-2 w-full rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-black outline-none transition focus:border-black focus:ring-2 focus:ring-black/10" />
                 </label>
                 <label className="block">
                   <span className="text-xs font-medium uppercase tracking-[0.18em] text-black/45">Tenant name</span>
